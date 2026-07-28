@@ -1,0 +1,1 @@
+{"compilerOptions":{"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext","strict":true,"declaration":true,"outDir":"dist","skipLibCheck":true,"noUncheckedIndexedAccess":true,"verbatimModuleSyntax":true}}

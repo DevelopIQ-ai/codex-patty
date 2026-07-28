@@ -1,0 +1,11 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { CodexAppServerAdapter } from '../src/codex.js';
+describe('documented stdio JSON-RPC boundary', () => {
+  it('dispatches versioned turn, approval, quota, and login notifications', async () => { const dir = await mkdtemp(join(tmpdir(), 'patty-rpc-')); const fixture = join(dir, 'fake.cjs'); await writeFile(fixture, `const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',l=>{const r=JSON.parse(l);const out=x=>process.stdout.write(JSON.stringify(x)+'\\n');if(r.method==='turn/start'){out({jsonrpc:'2.0',id:r.id,result:{turnId:'t1'}});out({jsonrpc:'2.0',method:'turn/event',params:{turnId:'t1',event:{type:'delta',data:{x:1}}}});out({jsonrpc:'2.0',method:'turn/approvalRequired',params:{turnId:'t1',approvalId:'a1'}});out({jsonrpc:'2.0',method:'turn/event',params:{turnId:'t1',event:{type:'completed'}}});return}out({jsonrpc:'2.0',id:r.id,result:r.method==='initialize'?{serverInfo:{version:'fake-1'}}:{ok:true}})})`); const adapter = new CodexAppServerAdapter(process.execPath, [fixture], dir, 'fake-1'); await adapter.start(); const events: string[] = []; await adapter.run(undefined, 'x', event => events.push(event.type)); await new Promise(resolve => setTimeout(resolve, 10)); expect(events).toEqual(['delta', 'approval_required', 'completed']); await adapter.shutdown(); });
+  it('rejects an incompatible app-server version', async () => { const dir = await mkdtemp(join(tmpdir(), 'patty-rpc-')); const fixture = join(dir, 'fake-app-server.cjs'); await writeFile(fixture, `require('node:readline').createInterface({input:process.stdin}).on('line',l=>{const r=JSON.parse(l);process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result:{serverInfo:{version:'wrong'}}})+'\\n')})`); await expect(new CodexAppServerAdapter(process.execPath, [fixture], dir, 'expected').start()).rejects.toThrow('protocol_incompatible'); });
+});
+
+it('contains a missing Codex executable as a rejected startup', async () => { const adapter = new CodexAppServerAdapter('/definitely/missing-codex', ['app-server'], '/tmp', 'x'); await expect(adapter.start()).rejects.toBeInstanceOf(Error); });

@@ -1,0 +1,30 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { createInterface } from 'node:readline';
+import type { PattyEvent, ProviderAdapter, Quota } from '@patty/contracts';
+type Rpc = { id?: unknown; method?: unknown; params?: unknown; result?: unknown; error?: { message?: unknown } };
+type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
+/** Documented stdio boundary. Protocol method names are intentionally centralized here. */
+export class CodexAppServerAdapter extends EventEmitter implements ProviderAdapter {
+  private child?: ChildProcessWithoutNullStreams; private next = 0; private stopping = false;
+  private readonly pending = new Map<number, Pending>(); private readonly turns = new Map<string, (event: PattyEvent) => void>();
+  constructor(private readonly command: string, private readonly args: string[], private readonly home: string, private readonly expectedVersion: string) { super(); if (!expectedVersion) throw new Error('a pinned Codex app-server version is required'); }
+  async start() {
+    if (this.child) return;
+    const child = spawn(this.command, this.args, { env: { ...process.env, CODEX_HOME: this.home }, stdio: 'pipe' }); this.child = child;
+    child.once('error', error => this.stop(error)); child.stdin.on('error', error => this.stop(error)); child.once('exit', () => this.stop(new Error('app-server exited')));
+    createInterface({ input: child.stdout }).on('line', line => this.receive(line)); child.stderr.on('data', () => undefined);
+    const initialized = await this.rpc('initialize', { clientInfo: { name: 'codex-patty', version: '0.1.0' } }) as { serverInfo?: { version?: string }; version?: string; schemaDigest?: string };
+    if ((initialized.serverInfo?.version ?? initialized.version) !== this.expectedVersion) { await this.shutdown(); throw new Error(`protocol_incompatible: expected Codex ${this.expectedVersion}`); }
+  }
+  private receive(line: string) { let message: Rpc; try { message = JSON.parse(line) as Rpc; } catch { this.emit('protocolError', 'malformed_frame'); return; } if (typeof message.id === 'number') { const pending = this.pending.get(message.id); if (!pending) return; clearTimeout(pending.timer); this.pending.delete(message.id); message.error ? pending.reject(new Error(String(message.error.message ?? 'rpc error'))) : pending.resolve(message.result); return; } if (typeof message.method === 'string') this.notification(message.method, message.params); }
+  private notification(method: string, params: unknown) { const value = params as { turnId?: string; event?: { type?: PattyEvent['type']; data?: unknown }; approvalId?: string; remaining?: number; resetAt?: string } | undefined; if (method === 'turn/event' && value?.turnId && value.event?.type) this.turns.get(value.turnId)?.({ version: 1, type: value.event.type, runId: value.turnId, data: value.event.data }); else if (method === 'turn/approvalRequired') this.turns.get(value?.turnId ?? '')?.({ version: 1, type: 'approval_required', runId: value?.turnId ?? '', data: { approvalId: value?.approvalId } }); else if (method === 'account/rateLimits/updated') this.emit('quota', { remaining: value?.remaining, resetAt: value?.resetAt, observedAt: new Date().toISOString() } satisfies Quota); else if (method.startsWith('account/login/')) this.emit('login', { method, params }); else this.emit('notification', { method, params }); }
+  private rpc(method: string, params?: unknown): Promise<unknown> { if (!this.child) return Promise.reject(new Error('worker not started')); if (this.pending.size >= 128) return Promise.reject(new Error('upstream_overloaded')); const requestId = ++this.next; this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params })}\n`); return new Promise((resolve, reject) => { const timer = setTimeout(() => { this.pending.delete(requestId); reject(new Error('rpc timeout')); }, 30_000); this.pending.set(requestId, { resolve, reject, timer }); }); }
+  private stop(reason: Error) { for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(reason); } this.pending.clear(); this.child = undefined; if (!this.stopping) this.emit('exit', reason); }
+  async login(mode: 'browser' | 'device_code') { return this.rpc('account/login/start', { mode }) as Promise<{ url?: string; code?: string }>; } async cancelLogin() { await this.rpc('account/login/cancel'); }
+  async snapshot() { const account = await this.rpc('account/read') as { models?: string[]; capabilities?: string[] }; const limits = await this.rpc('account/rateLimits/read') as { remaining?: number; resetAt?: string }; return { models: account.models ?? [], capabilities: account.capabilities ?? [], quota: { remaining: limits.remaining, resetAt: limits.resetAt, observedAt: new Date().toISOString() } }; }
+  async createThread() { return (await this.rpc('thread/start') as { threadId: string }).threadId; }
+  async run(threadId: string | undefined, input: string, onEvent: (event: PattyEvent) => void) { const turn = await this.rpc('turn/start', { threadId, input }) as { turnId: string }; this.turns.set(turn.turnId, onEvent); return { turnId: turn.turnId }; }
+  async interrupt(providerTurnId: string) { await this.rpc('turn/interrupt', { turnId: providerTurnId }); } async approve(approvalId: string, approved: boolean) { await this.rpc('turn/approval', { approvalId, approved }); } async logout() { await this.rpc('account/logout'); } async health() { return Boolean(this.child); }
+  async shutdown() { const child = this.child; if (!child) return; this.stopping = true; this.stop(new Error('worker shut down')); child.kill('SIGTERM'); const exited = await new Promise<boolean>(resolve => { const timer = setTimeout(() => resolve(false), 1_000); child.once('exit', () => { clearTimeout(timer); resolve(true); }); }); if (!exited) { child.kill('SIGKILL'); await new Promise<void>(resolve => child.once('exit', () => resolve())); } this.stopping = false; }
+}

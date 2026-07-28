@@ -1,0 +1,5 @@
+node_modules
+dist
+.patty
+*.sqlite
+coverage

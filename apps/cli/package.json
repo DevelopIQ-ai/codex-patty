@@ -1,0 +1,1 @@
+{"name":"@patty/cli","version":"0.1.0","type":"module","bin":{"patty":"./dist/index.js"},"scripts":{"build":"tsc -p tsconfig.json && chmod +x dist/index.js","lint":"tsc --noEmit -p tsconfig.json","typecheck":"tsc --noEmit -p tsconfig.json"}}

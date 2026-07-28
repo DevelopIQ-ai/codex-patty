@@ -1,0 +1,26 @@
+{
+  "name": "codex-patty",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "build": "corepack pnpm -r build",
+    "lint": "corepack pnpm -r lint",
+    "typecheck": "corepack pnpm -r typecheck",
+    "test:unit": "corepack pnpm --filter @patty/daemon test:unit",
+    "test:contract": "corepack pnpm --filter @patty/daemon test:contract",
+    "test:integration": "corepack pnpm --filter @patty/daemon test:integration",
+    "test:e2e:fake": "corepack pnpm --filter @patty/daemon test:e2e:fake",
+    "test:live": "corepack pnpm --filter @patty/daemon test:live",
+    "openapi:lint": "redocly lint packages/contracts/openapi/codex-patty.openapi.yaml"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^1.34.17",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}
