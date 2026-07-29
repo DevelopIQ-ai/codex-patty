@@ -1,9 +1,7 @@
 # Provider authorization gate
 
-**Status: not approved.** This repository deliberately ships only the fake app-server test path. Before any real account is connected or this project is released, the operator must receive affirmative written authorization from OpenAI that covers: a local single-owner daemon; more than one owner-controlled consumer subscription; quota- and health-aware selection; official `codex app-server` browser/device-code login and JSON-RPC only; no credential transfer; and no hosted resale.
+**Status: operator-attested.** The operator has attested that OpenAI authorization covers this local use. The underlying correspondence was not reviewed by repository maintainers or Vorflux, is not bundled or committed, and must not be inferred from this repository.
 
-A successful login, generic Codex documentation, or silence is not approval. If approval is denied or unclear, do not enable a fallback provider, direct OAuth flow, API-key routing, token import, or a hosted service. Record the written approval, Codex version, schema digest, and successful isolated-account smoke evidence here before setting `PATTY_ENABLE_LIVE_CODEX=1`.
+Live use remains deliberately fail-closed. It requires all of: `PATTY_ENABLE_LIVE_CODEX=1`; an exact local attestation path and SHA-256 in `PATTY_AUTHORIZATION_EVIDENCE` and `PATTY_AUTHORIZATION_SHA256`; the exact `@openai/codex` 0.145.0 command/version; and, for the live harness, `PATTY_LIVE_TESTS=1`. Patty never reads `auth.json`, transfers credentials, or uses private endpoints.
 
-## Local evidence requirement
-
-Even after written authorization is obtained, live mode requires a local evidence file and a separately supplied SHA-256 digest (`PATTY_AUTHORIZATION_EVIDENCE` and `PATTY_AUTHORIZATION_SHA256`) in addition to `PATTY_ENABLE_LIVE_CODEX=1`. This prevents environment-only enablement. The project still has no approved evidence bundled with it, and the live suite remains blocked.
+Live test evidence is pending. A successful login or a passing local run is not a replacement for authorization evidence.

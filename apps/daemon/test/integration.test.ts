@@ -1,8 +1,9 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, readFile, stat, symlink } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
-import { resolve } from 'node:path';
-import { PattyDaemon } from '../src/server.js';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { PattyDaemon, privateDirectory } from '../src/server.js';
 let server: Server | undefined;
 afterEach(async () => { await new Promise<void>(resolveClose => server?.close(() => resolveClose()) ?? resolveClose()); server = undefined; });
 describe('loopback HTTP API', () => {
@@ -28,3 +29,8 @@ it('accepts only GET health checks', async () => { const daemon=new PattyDaemon(
 it('rejects non-boolean approval decisions', async () => { const daemon=new PattyDaemon();daemon.addFakeAccount('approval');server=await daemon.listen();const port=(server.address() as {port:number}).port;const headers={authorization:`Bearer ${daemon.key}`,'content-type':'application/json'};const response=await fetch(`http://127.0.0.1:${port}/v1/runs/nope/approvals/a`,{method:'POST',headers,body:JSON.stringify({approved:'false'})});expect(response.status).toBe(400); });
 
 it('exposes authenticated models and router status', async () => { const daemon=new PattyDaemon();daemon.addFakeAccount('pool');server=await daemon.listen();const port=(server.address() as {port:number}).port;const headers={authorization:`Bearer ${daemon.key}`};expect((await fetch(`http://127.0.0.1:${port}/v1/models`,{headers})).status).toBe(200);expect((await fetch(`http://127.0.0.1:${port}/v1/router/status`,{headers})).status).toBe(200); });
+
+it('fails closed before creating account state when live prerequisites are absent', async () => { const keys=['PATTY_ENABLE_LIVE_CODEX','PATTY_AUTHORIZATION_EVIDENCE','PATTY_AUTHORIZATION_SHA256','PATTY_CODEX_COMMAND','PATTY_CODEX_VERSION'] as const;const saved=new Map(keys.map(key=>[key,process.env[key]]));for(const key of keys)delete process.env[key];const daemon=new PattyDaemon();try{await expect(daemon.addCodexAccount('offline','device_code')).rejects.toThrow('verified local authorization evidence and pinned command');expect(daemon.store.accounts()).toEqual([]);expect(daemon.adapters.size).toBe(0);expect(daemon.homes.size).toBe(0);}finally{await daemon.shutdown();for(const [key,value] of saved)value===undefined?delete process.env[key]:process.env[key]=value;} });
+
+
+it('enforces owner-only, non-symlink Codex home directories', async () => { const root = await mkdtemp(join(tmpdir(), 'patty-home-')); const privateRoot = privateDirectory(join(root, 'accounts')); expect((await stat(privateRoot)).mode & 0o777).toBe(0o700); await symlink(privateRoot, join(root, 'link')); expect(() => privateDirectory(join(root, 'link'))).toThrow('unsafe_account_home'); await chmod(privateRoot, 0o755); expect(privateDirectory(privateRoot)).toBe(privateRoot); expect((await stat(privateRoot)).mode & 0o777).toBe(0o700); });

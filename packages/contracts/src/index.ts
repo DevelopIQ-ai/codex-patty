@@ -12,9 +12,9 @@ export interface ProviderAdapter {
   login(mode: 'browser' | 'device_code'): Promise<{ url?: string; code?: string }>;
   cancelLogin(): Promise<void>;
   snapshot(): Promise<{ models: string[]; quota: Quota; capabilities?: string[] }>;
-  createThread(): Promise<string>;
+  createThread(model: string): Promise<string>;
   /** Resolves as soon as the provider accepts the turn, with its cancellation ID. */
-  run(threadId: string | undefined, input: string, onEvent: (event: PattyEvent) => void): Promise<{ turnId: string }>;
+  run(threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void): Promise<{ turnId: string }>;
   interrupt(providerTurnId: string): Promise<void>;
   approve(approvalId: string, approved: boolean): Promise<void>;
   logout(): Promise<void>;

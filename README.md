@@ -1,6 +1,6 @@
 # Codex Patty
 
-A local, single-user, Patty-native daemon and CLI that routes work between isolated official Codex app-server accounts. It is **not enabled for live multi-account use until written provider authorization is recorded**. See [docs/provider-authorization.md](docs/provider-authorization.md), [architecture](docs/architecture.md), and [operations](docs/operations.md).
+A local, single-user, Patty-native daemon and CLI that routes work between isolated official Codex app-server accounts. It is **fail-closed for live multi-account use unless the operator-attested local authorization gate is satisfied**. See [docs/provider-authorization.md](docs/provider-authorization.md), [architecture](docs/architecture.md), and [operations](docs/operations.md).
 
 ## Local fake-worker demo
 
