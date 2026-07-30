@@ -93,7 +93,7 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
           if (!line.startsWith('data:')) continue;
           const payload = line.slice(5).trim();
           if (payload === '[DONE]') continue;
-          const event = JSON.parse(payload) as { choices?: { delta?: { content?: string; tool_calls?: ToolCallDelta[] } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
+          const event = JSON.parse(payload) as { choices?: { delta?: { content?: string; tool_calls?: ToolCallDelta[] } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; completion_tokens_details?: { reasoning_tokens?: number } } };
           const text = event.choices?.[0]?.delta?.content;
           if (text) onEvent({ version: 1, type: 'delta', runId: turnId, data: { text } });
           for (const fragment of event.choices?.[0]?.delta?.tool_calls ?? []) {
@@ -106,9 +106,10 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
           }
           if (event.usage) onEvent({ version: 1, type: 'usage', runId: turnId, data: {
             inputTokens: event.usage.prompt_tokens ?? 0,
-            cachedInputTokens: 0,
+            /** Cached input is billed at a discount everywhere it is reported, so dropping these details would price a cached-heavy turn as if none of it were cached. */
+            cachedInputTokens: event.usage.prompt_tokens_details?.cached_tokens ?? 0,
             outputTokens: event.usage.completion_tokens ?? 0,
-            reasoningOutputTokens: 0,
+            reasoningOutputTokens: event.usage.completion_tokens_details?.reasoning_tokens ?? 0,
             totalTokens: event.usage.total_tokens ?? (event.usage.prompt_tokens ?? 0) + (event.usage.completion_tokens ?? 0),
           } satisfies TokenUsage });
         }

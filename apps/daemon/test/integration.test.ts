@@ -363,6 +363,26 @@ describe('OpenAI-compatible provider adapter', () => {
     delete process.env.PATTY_TEST_PROVIDER_KEY;
   });
 
+  it('keeps the provider’s cached and reasoning token details, so a cached turn is priced as one', async () => {
+    const daemon = new PattyDaemon();
+    const fetchImpl = upstream((path) => path.endsWith('/models')
+      ? new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }), { headers: { 'content-type': 'application/json' } })
+      : sse(['data: {"choices":[{"delta":{"content":"hi"}}]}\n', 'data: {"usage":{"prompt_tokens":1000,"completion_tokens":100,"total_tokens":1100,"prompt_tokens_details":{"cached_tokens":800},"completion_tokens_details":{"reasoning_tokens":40}}}\n', 'data: [DONE]\n']));
+    process.env.PATTY_TEST_PROVIDER_KEY = 'sk-not-a-real-key';
+    await daemon.addOpenAiCompatibleAccount('together', 'https://api.example.invalid/v1', 'PATTY_TEST_PROVIDER_KEY', fetchImpl);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    const body = await (await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'hi' }] }) })).json() as { usage: { prompt_tokens_details: { cached_tokens: number }; completion_tokens_details: { reasoning_tokens: number } } };
+    expect(body.usage.prompt_tokens_details.cached_tokens).toBe(800);
+    expect(body.usage.completion_tokens_details.reasoning_tokens).toBe(40);
+    const usage = await (await fetch(`http://127.0.0.1:${port}/v1/usage`, { headers })).json() as { data: { accounts: { cachedInputTokens: number }[]; cost: { apiUsd: number } } };
+    expect(usage.data.accounts[0]!.cachedInputTokens).toBe(800);
+    /** gpt-4o-mini at .15/.075/.6 per million: 200 uncached in, 800 cached in, 100 out — billing the cached input at full rate would give .00015. */
+    expect(usage.data.cost.apiUsd).toBeCloseTo((200 * .15 + 800 * .075 + 100 * .6) / 1e6, 10);
+    delete process.env.PATTY_TEST_PROVIDER_KEY;
+  });
+
   it('never persists the provider secret and refuses to run without it', async () => {
     const daemon = new PattyDaemon();
     const fetchImpl = upstream(() => new Response(JSON.stringify({ data: [{ id: 'm' }] }), { headers: { 'content-type': 'application/json' } }));
@@ -523,5 +543,22 @@ describe('tool calling', () => {
     expect(stored).toHaveLength(1);
     expect(JSON.parse(stored[0]!.data!)).toEqual({ redacted: true });
     expect(stored[0]!.data).not.toContain('get_weather');
+  });
+
+  it('offers tools through the console path, and streams the calls to a late subscriber', async () => {
+    const { port, headers } = await boot();
+    const accepted = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'weather in Denver?', chat: { messages: [{ role: 'user', content: 'weather in Denver?' }], tools } }) })).json() as { id: string };
+    const stream = await (await fetch(`http://127.0.0.1:${port}/v1/runs/${accepted.id}/events`, { headers })).text();
+    const events = stream.split('\n\n').flatMap(frame => { const line = frame.split('\n').find(part => part.startsWith('data: ')); return line ? [JSON.parse(line.slice(6)) as { type: string; data?: { toolCalls?: { function: { name: string } }[] } }] : []; });
+    const call = events.find(event => event.type === 'tool_calls');
+    expect(call?.data?.toolCalls?.[0]).toMatchObject({ function: { name: 'get_weather' } });
+  });
+
+  it('refuses a console tool run when no stacked sub supports tools', async () => {
+    const { port, headers, daemon } = await boot();
+    for (const account of daemon.store.accounts()) daemon.store.setCapabilities(account.id, ['filesystem']);
+    const response = await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'hi', chat: { messages: [{ role: 'user', content: 'hi' }], tools } }) });
+    expect(response.status).toBe(400);
+    expect((await response.json() as { error: { code: string; retryable: boolean } }).error).toMatchObject({ code: 'model_unavailable', retryable: false });
   });
 });
