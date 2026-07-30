@@ -12,7 +12,8 @@ for (const argument of process.argv.filter(value => value === '--fake' || value.
   const [alias = 'fake-primary', remaining] = argument.slice('--fake'.length).replace(/^=/, '').split(':');
   daemon.addFakeAccount(alias || 'fake-primary', ['gpt-5-codex'], remaining === undefined ? 1 : Number(remaining));
 }
+const restored = await daemon.restoreCodexAccounts();
 const server = await daemon.listen(Number(process.env.PATTY_PORT ?? 3210));
-console.log(JSON.stringify({ listening: server.address(), ...(daemon.key ? { apiKey: daemon.key, warning: 'API key shown once; store it securely' } : { warning: 'existing local Patty key required; no new key was issued' }) }));
+console.log(JSON.stringify({ listening: server.address(), ...(restored.length ? { restoredSubs: restored.map(account => account.alias) } : {}), ...(daemon.key ? { apiKey: daemon.key, warning: 'API key shown once; store it securely' } : { warning: 'existing local Patty key required; no new key was issued' }) }));
 const shutdown = () => void daemon.shutdown().finally(() => server.close(() => process.exit(0)));
 process.once('SIGINT', shutdown); process.once('SIGTERM', shutdown);
