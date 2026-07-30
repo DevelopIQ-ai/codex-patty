@@ -86,6 +86,8 @@ WantedBy=default.target
 
 Patty listens on loopback only unless you explicitly opt in (`PATTY_ALLOW_NON_LOOPBACK=1` plus a specific `PATTY_HOST`; wildcards are always refused). On macOS use a launchd agent with the same command. Full details, including the live-mode variables a service needs, are in [docs/operations.md](docs/operations.md).
 
+To run it on a box and point an app at it — one always-on machine, subs logged in over an SSH tunnel or device code, reachable over a tailnet or behind TLS — follow [docs/deploy.md](docs/deploy.md). Serverless platforms can't host Patty itself (each sub is a long-lived process with a logged-in home on disk), but they make perfectly good clients of it.
+
 ## What it does
 
 | | |

@@ -23,6 +23,7 @@ CI runs exactly this. Please also:
 - Keep the invariants in [docs/architecture.md](docs/architecture.md) intact — loopback-only binding, no prompt/output persistence, no reading of `auth.json` or OAuth tokens, and the fail-closed live gate.
 - Add a test that fails without your change. Contract tests come from the official protocol schemas in `packages/codex-protocol/generated`, so provider-shape changes belong there rather than in hand-written mocks.
 - Update `packages/contracts/openapi/codex-patty.openapi.yaml` when you touch the HTTP surface.
+- Add a line to the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md) for anything a user would notice.
 
 ## Good first areas
 
