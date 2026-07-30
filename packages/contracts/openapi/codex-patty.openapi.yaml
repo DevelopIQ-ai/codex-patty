@@ -26,20 +26,59 @@ components:
         accountId: { type: string }
         threadId: { type: string }
         idempotencyKey: { type: string }
+    ChatCompletion:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string }
+        stream: { type: boolean, default: false }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [system, developer, user, assistant] }
+              content:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string }
+                        text: { type: string }
 paths:
   /healthz: { get: { responses: {'200': {description: Liveness}} } }
-  /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: Models}} } }
+  /: { get: { responses: {'200': {description: Loopback operator console (HTML)}} } }
+  /v1/usage: { get: { security: [{PattyKey: []}], responses: {'200': {description: Token usage totals, per-sub aggregates, and recent measured runs}} } }
+  /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Models in OpenAI list shape; each entry names the subs that serve it'}} } }
+  /v1/chat/completions:
+    post:
+      summary: OpenAI-compatible chat completion, routed across stacked subs
+      description: Set OPENAI_BASE_URL to http://127.0.0.1:3210/v1 and any OpenAI client works. The x-patty-sub response header names the sub that served the request.
+      security: [{PattyKey: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ChatCompletion'}}}}
+      responses:
+        '200': {description: 'chat.completion, or a chat.completion.chunk SSE stream when stream is true'}
+        '400': {description: Invalid request}
+        '502': {description: Upstream run failed or was cancelled}
   /v1/router/status: { get: { security: [{PattyKey: []}], responses: {'200': {description: Router status}} } }
-  /v1/api-keys: { post: { security: [{PattyKey: []}], responses: {'201': {description: Issued key}} } }
+  /v1/api-keys:
+    get: { security: [{PattyKey: []}], responses: {'200': {description: 'Issued keys with name, prefix, creation, last use and revocation state; never the secret'}} }
+    post: { security: [{PattyKey: []}], requestBody: {required: false, content: {application/json: {schema: {type: object, properties: {name: {type: string, description: 'Human label, e.g. puffle-prod'}}}}}}, responses: {'201': {description: 'Issued key; the secret is returned once and never again'}} }
   /v1/api-keys/{id}: { delete: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/KeyId'}], responses: {'204': {description: Revoked}} } }
   /v1/accounts: { get: { security: [{PattyKey: []}], responses: {'200': {description: Accounts}} } }
+  /v1/accounts/openai-compatible: { post: { security: [{PattyKey: []}], requestBody: {required: true, content: {application/json: {schema: {type: object, required: [alias, baseUrl, apiKeyEnv], properties: {alias: {type: string}, baseUrl: {type: string, description: 'http(s) base URL of an OpenAI-compatible endpoint'}, apiKeyEnv: {type: string, description: 'Name of the environment variable holding the provider key; the secret itself is never sent or stored'}}}}}}, responses: {'201': {description: Stacked sub}} } }
   /v1/accounts/codex/login: { post: { security: [{PattyKey: []}], responses: {'202': {description: Login challenge}} } }
   /v1/accounts/{id}: { delete: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'204': {description: Removed}} } }
   /v1/accounts/{id}/refresh: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'200': {description: Snapshot}} } }
   /v1/accounts/{id}/login/cancel: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'202': {description: Cancelled}} } }
   /v1/threads: { post: { security: [{PattyKey: []}], responses: {'201': {description: Thread}} } }
   /v1/threads/{id}/turns: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/ThreadId'}], responses: {'202': {description: Turn}} } }
-  /v1/runs: { post: { security: [{PattyKey: []}], requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}, responses: {'202': {description: Run}} } }
+  /metrics: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Prometheus text exposition: sub quota, reset seconds, health, active runs, runs by status, attempts by reason, tokens per sub and per key', content: {text/plain: {schema: {type: string}}}}} } }
+  /v1/doctor: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Named checks with a detail and, when failing, a hint that names the fix'}} } }
+  /v1/runs: { get: { security: [{PattyKey: []}], parameters: [{name: sub, in: query, schema: {type: string}}, {name: model, in: query, schema: {type: string}}, {name: status, in: query, schema: {type: string}}, {name: keyId, in: query, schema: {type: string}}, {name: since, in: query, schema: {type: string, format: date-time}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 50}}], responses: {'200': {description: 'Run history, newest first, with sub, key, status, attempt count and tokens'}} }, post: { security: [{PattyKey: []}], requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}, responses: {'202': {description: Run}} } }
   /v1/runs/{id}: { get: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/RunId'}], responses: {'200': {description: Run}} } }
   /v1/runs/{id}/events: { get: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/RunId'}], responses: {'200': {description: SSE}} } }
   /v1/runs/{id}/cancel: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/RunId'}], responses: {'202': {description: Cancel}} } }
