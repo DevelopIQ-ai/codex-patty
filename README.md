@@ -4,6 +4,10 @@
 
 Patty is a local, loopback-only daemon that holds several signed-in Codex/ChatGPT subscriptions ("subs"), picks one per request based on remaining quota, health and in-flight load, streams the answer back, and meters tokens in/out per sub using the provider's own counters. It ships a web console and a CLI. No cloud service, no proxy, no credential handling — each sub lives in its own isolated `CODEX_HOME` and only the official [Codex app-server](https://developers.openai.com/codex) protocol is used.
 
+![Codex Patty in 20 seconds: three stacked subs plus an API-credit fallback, the router explaining its choice, a request routed and answered, and tokens metered per sub](docs/images/demo.webp)
+
+<sub>Three fake subs and an API-credit fallback, live: quota windows, the router naming the winner and why, a request routed to `codex-work`, and its tokens metered. Reproduce it with `corepack pnpm demo`.</sub>
+
 ![Codex Patty console: three stacked subs, router scores, a streamed run and per-sub token metering](docs/images/console.png)
 
 ## Try it in 60 seconds (no subscription needed)
