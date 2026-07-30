@@ -184,7 +184,8 @@ const api = async (path, init = {}) => {
   const response = await fetch(path, { ...init, headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json', ...(init.headers ?? {}) } });
   if (response.status === 204) return null;
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error?.code ?? 'request failed: ' + response.status);
+  /** The code alone says what went wrong but never how to fix it, and these messages name the fix. */
+  if (!response.ok) throw new Error(body?.error?.message ?? body?.error?.code ?? 'request failed: ' + response.status);
   return body;
 };
 
