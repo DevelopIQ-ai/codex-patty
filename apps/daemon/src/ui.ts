@@ -44,6 +44,7 @@ pre { margin:0; background:#0e121a; border:1px solid var(--line); border-radius:
 .muted { color:var(--muted); }
 .err { color:var(--bad); }
 .ok { color:var(--good); }
+.warn { color:var(--warn); }
 code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
 </style>
 </head>
@@ -127,8 +128,22 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
   </section>
 
   <section class="wide">
-    <h2>Recent runs</h2>
-    <table><thead><tr><th>Run</th><th>Sub</th><th>Key</th><th>Model</th><th>In</th><th>Out</th><th>Total</th><th>Observed</th></tr></thead><tbody id="recent"><tr><td colspan="8" class="muted">no usage recorded yet</td></tr></tbody></table>
+    <h2>Run history</h2>
+    <div class="row">
+      <select id="f-sub"><option value="">all subs</option></select>
+      <select id="f-model"><option value="">all models</option></select>
+      <select id="f-status"><option value="">all statuses</option><option value="completed">completed</option><option value="running">running</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select>
+      <select id="f-key"><option value="">all keys</option></select>
+      <select id="f-limit"><option value="25">25</option><option value="50" selected>50</option><option value="200">200</option></select>
+      <button id="refresh-runs">Apply</button>
+      <span class="muted" id="runs-count"></span>
+    </div>
+    <table><thead><tr><th>Run</th><th>Sub</th><th>Key</th><th>Model</th><th>Status</th><th>Tries</th><th>In</th><th>Out</th><th>Total</th><th>Started</th></tr></thead><tbody id="recent"><tr><td colspan="10" class="muted">no runs yet</td></tr></tbody></table>
+  </section>
+
+  <section class="wide">
+    <h2>Doctor</h2>
+    <table><thead><tr><th>Check</th><th>Result</th><th>Detail</th><th>Fix</th></tr></thead><tbody id="doctor"><tr><td colspan="4" class="muted">not checked yet</td></tr></tbody></table>
   </section>
 </main>
 <script type="module">
@@ -199,9 +214,6 @@ function renderUsage(report) {
   el('per-account').innerHTML = report.accounts.length ? report.accounts.map(account => \`<tr>
     <td><code>\${account.alias}</code></td><td>\${fmt(account.runs)}</td><td>\${fmt(account.inputTokens)}</td><td>\${fmt(account.outputTokens)}</td><td>\${fmt(account.totalTokens)}</td>
     <td><div class="bar"><i style="width:\${Math.round((account.totalTokens / max) * 100)}%"></i></div></td></tr>\`).join('') : '<tr><td colspan="6" class="muted">no usage recorded yet</td></tr>';
-  el('recent').innerHTML = report.runs.length ? report.runs.map(run => \`<tr>
-    <td><code>\${run.runId}</code></td><td><code>\${run.alias}</code></td><td class="muted">\${keyLabel(run.keyName, run.keyId)}</td><td class="muted">\${run.model}</td>
-    <td>\${fmt(run.inputTokens)}</td><td>\${fmt(run.outputTokens)}</td><td>\${fmt(run.totalTokens)}</td><td class="muted">\${new Date(run.observedAt).toLocaleTimeString()}</td></tr>\`).join('') : '<tr><td colspan="8" class="muted">no usage recorded yet</td></tr>';
   el('per-key').innerHTML = report.keys.length ? report.keys.map(entry => \`<tr>
     <td>\${keyLabel(entry.name, entry.keyId, entry.prefix)}</td><td>\${fmt(entry.runs)}</td><td>\${fmt(entry.inputTokens)}</td><td>\${fmt(entry.outputTokens)}</td><td>\${fmt(entry.totalTokens)}</td></tr>\`).join('') : '<tr><td colspan="5" class="muted">no usage recorded yet</td></tr>';
 }
@@ -223,6 +235,36 @@ function renderKeys(keys) {
   for (const button of el('keys').querySelectorAll('[data-revoke]')) button.onclick = async () => { if (confirm('Revoke this key? Anything using it stops working immediately.')) { await api('/v1/api-keys/' + button.dataset.revoke, { method: 'DELETE' }); await load(); } };
 }
 
+function renderHistory(runs) {
+  el('recent').innerHTML = runs.length ? runs.map(run => \`<tr>
+    <td><code>\${run.runId}</code></td><td><code>\${run.alias}</code></td><td class="muted">\${keyLabel(run.keyName, run.keyId)}</td>
+    <td class="muted">\${run.model ?? '—'}</td><td class="\${run.status === 'completed' ? 'ok' : run.status === 'failed' ? 'err' : 'muted'}">\${run.status}</td>
+    <td class="\${run.attempts > 1 ? 'warn' : 'muted'}">\${run.attempts}</td>
+    <td>\${fmt(run.inputTokens)}</td><td>\${fmt(run.outputTokens)}</td><td>\${fmt(run.totalTokens)}</td>
+    <td class="muted">\${new Date(run.createdAt).toLocaleTimeString()}</td></tr>\`).join('') : '<tr><td colspan="10" class="muted">no runs match these filters</td></tr>';
+  el('runs-count').textContent = runs.length + ' run(s)';
+}
+
+function renderDoctor(report) {
+  el('doctor').innerHTML = report.checks.map(check => \`<tr>
+    <td><code>\${check.check}</code></td><td class="\${check.ok ? 'ok' : 'err'}">\${check.ok ? 'ok' : 'problem'}</td>
+    <td class="muted">\${check.detail}</td><td class="muted">\${check.hint ?? ''}</td></tr>\`).join('');
+}
+
+/** Filters are driven by what the store actually has, so an empty result always means "nothing matched", never a typo. */
+function fillFilter(id, values, label = value => value) {
+  const select = el(id), previous = select.value;
+  const first = select.querySelector('option').outerHTML;
+  select.innerHTML = first + values.map(value => \`<option value="\${value.value}">\${label(value.label)}</option>\`).join('');
+  select.value = values.some(value => value.value === previous) ? previous : '';
+}
+
+function historyQuery() {
+  const params = new URLSearchParams();
+  for (const [key, id] of [['sub', 'f-sub'], ['model', 'f-model'], ['status', 'f-status'], ['keyId', 'f-key'], ['limit', 'f-limit']]) if (el(id).value) params.set(key, el(id).value);
+  return '/v1/runs?' + params.toString();
+}
+
 function renderModels(entries) {
   const models = entries.map(entry => entry.id);
   const select = el('model'), previous = select.value;
@@ -234,11 +276,17 @@ function renderModels(entries) {
 async function load() {
   if (!key) { setAuth('no key', 'err'); return; }
   try {
-    const [accounts, router, models, usage, keys] = await Promise.all([api('/v1/accounts'), api('/v1/router/status'), api('/v1/models'), api('/v1/usage'), api('/v1/api-keys')]);
-    renderAccounts(accounts.data); renderRouter(router.data); renderModels(models.data); renderUsage(usage.data); renderKeys(keys.data);
+    const [accounts, router, models, usage, keys, doctor] = await Promise.all([api('/v1/accounts'), api('/v1/router/status'), api('/v1/models'), api('/v1/usage'), api('/v1/api-keys'), api('/v1/doctor')]);
+    renderAccounts(accounts.data); renderRouter(router.data); renderModels(models.data); renderUsage(usage.data); renderKeys(keys.data); renderDoctor(doctor.data);
+    fillFilter('f-sub', accounts.data.map(account => ({ value: account.alias, label: account.alias })));
+    fillFilter('f-model', models.data.map(model => ({ value: model.id, label: model.id })));
+    fillFilter('f-key', keys.data.map(entry => ({ value: entry.id, label: entry.name ?? 'cp_live_' + entry.prefix })));
+    renderHistory((await api(historyQuery())).data);
     setAuth('connected', 'ok');
   } catch (error) { setAuth(String(error.message), 'err'); }
 }
+
+el('refresh-runs').onclick = async () => { try { renderHistory((await api(historyQuery())).data); } catch (error) { setAuth(String(error.message), 'err'); } };
 
 el('issue-key').onclick = async () => {
   try {

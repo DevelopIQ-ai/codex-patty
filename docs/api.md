@@ -37,3 +37,13 @@ Every run records the key that started it, and usage inherits that attribution f
 ## Streaming privacy
 
 Live SSE subscribers receive normalized provider deltas while connected. Patty persists only event ordering/type metadata for `delta` and approval events; it does not persist provider output content. Late SSE replay therefore provides redacted delta markers and terminal semantics, not prior generated text.
+
+## Observability
+
+`GET /metrics` returns Prometheus text exposition (authenticated like every other endpoint, since it names your subs): `patty_subs{state}`, `patty_sub_quota_remaining{sub}`, `patty_sub_quota_reset_seconds{sub}`, `patty_sub_health{sub}`, `patty_sub_active_runs{sub}`, `patty_runs_total{status}`, `patty_run_attempts_total{reason}` — which is where failover shows up as `reason="quota_failover"` — plus `patty_tokens_total{sub,direction}` and `patty_key_tokens_total{key}`. No prompt, output or credential is ever a label or a value.
+
+`GET /v1/runs?sub=&model=&status=&keyId=&since=&limit=` is the run history, newest first, capped at 500 per request, with each run's sub, key, status, attempt count and tokens. `attempts > 1` is the visible fingerprint of a failover.
+
+`GET /v1/doctor` (`patty doctor`) answers the only question a stuck operator has — can anything serve a request, and if not why — as named checks with a `detail` and, when a check fails, a `hint` naming the fix. `patty status` remains the raw router dump.
+
+The daemon writes one JSON line per request to stdout: timestamp, request id, method, path (without the query string), status, duration, and the routed sub and run when there was one. Prompts, outputs, key secrets and query values are never logged. Set `PATTY_LOG_LEVEL=silent` to turn it off.

@@ -21,7 +21,7 @@ describe('SSE lifecycle', () => {
 
 it('returns an allowlisted public run DTO', async () => { const daemon = new PattyDaemon(); const account = daemon.addFakeAccount('dto'); server = await daemon.listen(); const port = (server.address() as {port:number}).port; const headers={authorization:`Bearer ${daemon.key}`,'content-type':'application/json'}; const created=await fetch(`http://127.0.0.1:${port}/v1/runs`,{method:'POST',headers,body:JSON.stringify({model:'gpt-5-codex',input:'secret'})}); const {id}=await created.json() as {id:string}; const dto=await (await fetch(`http://127.0.0.1:${port}/v1/runs/${id}`,{headers})).json() as Record<string,unknown>; expect(dto).toHaveProperty('id'); expect(dto).not.toHaveProperty('provider_turn_id'); expect(dto).not.toHaveProperty('fingerprint'); expect(dto).not.toHaveProperty('idempotency_key'); });
 
-it('uses strict method dispatch and validates thread turns', async () => { const daemon = new PattyDaemon(); daemon.addFakeAccount('strict'); server = await daemon.listen(); const port=(server.address() as {port:number}).port; const headers={authorization:`Bearer ${daemon.key}`,'content-type':'application/json'}; expect((await fetch(`http://127.0.0.1:${port}/v1/runs`,{method:'GET',headers})).status).toBe(404); const thread=await (await fetch(`http://127.0.0.1:${port}/v1/threads`,{method:'POST',headers,body:JSON.stringify({model:'gpt-5-codex'})})).json() as {threadId:string}; expect((await fetch(`http://127.0.0.1:${port}/v1/threads/${thread.threadId}/turns`,{method:'POST',headers,body:JSON.stringify({model:'gpt-5-codex',input:''})})).status).toBe(400); expect((await fetch(`http://127.0.0.1:${port}/v1/threads/${thread.threadId}/turns`,{method:'GET',headers})).status).toBe(405); });
+it('uses strict method dispatch and validates thread turns', async () => { const daemon = new PattyDaemon(); daemon.addFakeAccount('strict'); server = await daemon.listen(); const port=(server.address() as {port:number}).port; const headers={authorization:`Bearer ${daemon.key}`,'content-type':'application/json'}; expect((await fetch(`http://127.0.0.1:${port}/v1/runs`,{method:'PUT',headers})).status).toBe(404);expect((await fetch(`http://127.0.0.1:${port}/v1/runs`,{method:'GET',headers})).status).toBe(200); const thread=await (await fetch(`http://127.0.0.1:${port}/v1/threads`,{method:'POST',headers,body:JSON.stringify({model:'gpt-5-codex'})})).json() as {threadId:string}; expect((await fetch(`http://127.0.0.1:${port}/v1/threads/${thread.threadId}/turns`,{method:'POST',headers,body:JSON.stringify({model:'gpt-5-codex',input:''})})).status).toBe(400); expect((await fetch(`http://127.0.0.1:${port}/v1/threads/${thread.threadId}/turns`,{method:'GET',headers})).status).toBe(405); });
 it('rejects cancellation of a terminal run', async () => { const daemon=new PattyDaemon(); daemon.addFakeAccount('terminal'); server=await daemon.listen(); const port=(server.address() as {port:number}).port;const headers={authorization:`Bearer ${daemon.key}`,'content-type':'application/json'};const run=await (await fetch(`http://127.0.0.1:${port}/v1/runs`,{method:'POST',headers,body:JSON.stringify({model:'gpt-5-codex',input:'x'})})).json() as {id:string};await new Promise(resolve=>setTimeout(resolve,10));expect((await fetch(`http://127.0.0.1:${port}/v1/runs/${run.id}/cancel`,{method:'POST',headers})).status).toBe(409); });
 
 it('emits executable Node shebangs for both packaged entrypoints', async () => { const daemonEntry=await readFile(resolve(import.meta.dirname,'../dist/src/main.js'),'utf8'); const cliEntry=await readFile(resolve(import.meta.dirname,'../../cli/dist/index.js'),'utf8'); expect(daemonEntry.startsWith('#!/usr/bin/env node')).toBe(true); expect(cliEntry.startsWith('#!/usr/bin/env node')).toBe(true); });
@@ -223,6 +223,73 @@ describe('multiple API keys', () => {
     const ci = listed.data.find(entry => entry.id === issued.id);
     expect(ci).toMatchObject({ name: 'ci' });
     expect(ci?.revoked_at).not.toBeNull();
-    expect(JSON.stringify(listed)).not.toContain(issued.key.split('_').at(-1));
+    expect(JSON.stringify(listed)).not.toContain(issued.key);
+    expect(JSON.stringify(listed)).not.toContain(issued.key.slice(-12));
+  });
+});
+
+describe('observability', () => {
+  it('exposes Prometheus metrics covering quota windows, failover reasons and token totals', async () => {
+    const daemon = new PattyDaemon();
+    const burned = daemon.addFakeAccount('burned', ['gpt-5-codex'], .9);
+    daemon.addFakeAccount('spare', ['gpt-5-codex'], .5);
+    burned.quota = { remaining: .9, resetAt: new Date(Date.now() + 600_000).toISOString(), observedAt: new Date().toISOString() };
+    daemon.store.updateAccount(burned);
+    (daemon.adapters.get(burned.id) as FakeAdapter).failNext('HTTP 429 usage limit');
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'metrics run' }] }) });
+    const response = await fetch(`http://127.0.0.1:${port}/metrics`, { headers });
+    expect(response.headers.get('content-type')).toContain('text/plain');
+    const body = await response.text();
+    expect(body).toContain('# TYPE patty_sub_quota_remaining gauge');
+    expect(body).toMatch(/patty_sub_quota_remaining\{sub="burned"\} 0\b/);
+    expect(body).toMatch(/patty_sub_quota_reset_seconds\{sub="burned"\} \d+/);
+    expect(body).toMatch(/patty_run_attempts_total\{reason="quota_failover"\} 1/);
+    expect(body).toMatch(/patty_runs_total\{status="completed"\} 1/);
+    expect(body).toMatch(/patty_tokens_total\{sub="spare",direction="input"\} \d+/);
+    expect((await fetch(`http://127.0.0.1:${port}/metrics`)).status).toBe(401);
+  });
+
+  it('filters run history by sub, model and status', async () => {
+    const daemon = new PattyDaemon();
+    daemon.addFakeAccount('one', ['gpt-5-codex']);
+    daemon.addFakeAccount('two', ['gpt-5-codex']);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    for (const content of ['first', 'second', 'third']) await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content }] }) });
+    const history = async (query: string) => (await (await fetch(`http://127.0.0.1:${port}/v1/runs${query}`, { headers })).json() as { data: { runId: string; alias: string; status: string; model: string; attempts: number }[] }).data;
+    const all = await history('');
+    expect(all).toHaveLength(3);
+    expect(all.every(entry => entry.status === 'completed' && entry.attempts === 1)).toBe(true);
+    expect(await history('?status=failed')).toHaveLength(0);
+    expect(await history('?model=gpt-4o')).toHaveLength(0);
+    expect(await history('?limit=1')).toHaveLength(1);
+    const sub = all[0]!.alias;
+    expect((await history(`?sub=${sub}`)).every(entry => entry.alias === sub)).toBe(true);
+    expect(await history('?sub=nobody')).toHaveLength(0);
+  });
+
+  it('reports actionable doctor checks instead of a bare router dump', async () => {
+    const empty = new PattyDaemon();
+    server = await empty.listen();
+    let port = (server.address() as { port: number }).port;
+    const read = async (daemon: PattyDaemon, at: number) => await (await fetch(`http://127.0.0.1:${at}/v1/doctor`, { headers: { authorization: `Bearer ${daemon.key}` } })).json() as { data: { ok: boolean; checks: { check: string; ok: boolean; hint?: string }[] } };
+    const bare = await read(empty, port);
+    expect(bare.data.ok).toBe(false);
+    expect(bare.data.checks.find(check => check.check === 'subs_stacked')).toMatchObject({ ok: false });
+    expect(bare.data.checks.find(check => check.check === 'subs_stacked')?.hint).toContain('--fake');
+    server.close();
+
+    const stacked = new PattyDaemon();
+    stacked.addFakeAccount('healthy', ['gpt-5-codex']);
+    server = await stacked.listen();
+    port = (server.address() as { port: number }).port;
+    const ready = await read(stacked, port);
+    expect(ready.data.ok).toBe(true);
+    expect(ready.data.checks.map(check => check.check)).toEqual(['subs_stacked', 'subs_servable', 'models_discovered', 'live_codex', 'active_keys', 'store_writable']);
+    expect(ready.data.checks.filter(check => check.hint !== undefined).map(check => check.check)).toEqual(['live_codex']);
   });
 });

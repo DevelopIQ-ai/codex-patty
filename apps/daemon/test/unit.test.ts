@@ -117,7 +117,7 @@ describe('named keys and per-key attribution', () => {
     expect(store.verifyKey(dev.key)).toMatchObject({ name: 'puffle-dev' });
     const listed = store.keys();
     expect(listed.map(entry => entry.name)).toEqual(['puffle-prod', 'puffle-dev']);
-    expect(listed.every(entry => !JSON.stringify(entry).includes(prod.key.split('_').at(-1)!))).toBe(true);
+    expect(listed.every(entry => !JSON.stringify(entry).includes(prod.key.slice(-12)))).toBe(true);
   });
 
   it('attributes a run usage to the key that started it, and leaves keyless runs honest', async () => {
