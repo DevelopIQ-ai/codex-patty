@@ -28,7 +28,7 @@ This is the one step that needs a browser, because Codex's OAuth redirect lands 
 - **SSH port-forward** — `ssh -L 1455:localhost:1455 you@box`, start the login, then open the printed URL in your local browser. The callback travels back down the tunnel.
 - **Device code** — `patty accounts add <alias> device_code` prints a code to enter on another device, with nothing to forward.
 
-Live subs are fail-closed: the daemon needs `PATTY_ENABLE_LIVE_CODEX=1` and the local authorization evidence described in [provider-authorization.md](provider-authorization.md). Logins survive restarts — the daemon re-attaches an app-server to each persisted sub at boot and prints `restoredSubs`.
+The box needs the Codex CLI installed; set `PATTY_CODEX_COMMAND` if it is not on the service user's PATH, and check with `patty doctor`. Logins survive restarts — the daemon re-attaches an app-server to each persisted sub at boot and prints `restoredSubs`.
 
 Add metered API credit as the safety net, so you keep answering when every sub is inside its reset window:
 
@@ -51,12 +51,8 @@ User=patty
 ExecStart=/usr/bin/codex-patty
 Environment=PATTY_DB_PATH=/home/patty/.patty/patty.sqlite
 Environment=PATTY_HOST=127.0.0.1
-# live subs only — omit any of these and the daemon starts in fake/offline mode by design
-Environment=PATTY_ENABLE_LIVE_CODEX=1
+# only needed when the Codex CLI is not on the service user's PATH
 Environment=PATTY_CODEX_COMMAND=/usr/bin/codex
-Environment=PATTY_CODEX_VERSION=0.145.0
-Environment=PATTY_AUTHORIZATION_EVIDENCE=/home/patty/.patty-live/authorization.txt
-Environment=PATTY_AUTHORIZATION_SHA256=<sha256sum of that file>
 Restart=on-failure
 RestartSec=5
 

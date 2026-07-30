@@ -14,7 +14,7 @@ Patty's whole security story is that it is local and holds no provider secrets, 
 - Serving a `/v1/*` request without a valid, unrevoked API key, or one key reading another key's usage, runs or limits.
 - Getting a prompt, an output, a tool name or tool arguments written to SQLite or to the logs.
 - Reading, moving or exfiltrating a sub's OAuth tokens or `auth.json`, or escaping a sub's isolated `CODEX_HOME`.
-- Starting live Codex without the fail-closed gate (`PATTY_ENABLE_LIVE_CODEX=1`, the pinned binary version, and the operator's authorization-evidence file).
+- Starting a Codex sub against an unpinned or substituted `codex` binary, or escaping the version check the adapter performs before it speaks to one.
 - Recovering a provider API key from `patty.sqlite` — OpenAI-compatible subs store the *name* of an environment variable, never its value.
 
 ## What does not

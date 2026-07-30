@@ -1,7 +1,12 @@
-# Provider authorization gate
+# Using your own subscriptions
 
-**Status: operator-attested.** The operator has attested that OpenAI authorization covers this local use. The underlying correspondence was not reviewed by repository maintainers or Vorflux, is not bundled or committed, and must not be inferred from this repository.
+Patty runs the subscriptions **you** already pay for, on **your** machine. It does that through the official Codex CLI: Patty starts `codex app-server`, you sign in through the browser window Codex opens, and Codex keeps the login in its own directory. Patty never reads `auth.json`, never copies a token anywhere, and never calls an endpoint the Codex client does not call.
 
-Live use remains deliberately fail-closed. It requires all of: `PATTY_ENABLE_LIVE_CODEX=1`; an exact local attestation path and SHA-256 in `PATTY_AUTHORIZATION_EVIDENCE` and `PATTY_AUTHORIZATION_SHA256`; the exact `@openai/codex` 0.145.0 command/version; and, for the live harness, `PATTY_LIVE_TESTS=1`. Patty never reads `auth.json`, transfers credentials, or uses private endpoints.
+That means the relationship is still between you and OpenAI, exactly as it is when you run `codex` by hand. Nothing here grants you rights you did not already have, and nothing here takes any away.
 
-The live path has been exercised by the attesting operator against two of their own ChatGPT subscriptions. A successful login or a passing local run is not a replacement for authorization evidence.
+Two things worth knowing before you point a product at it:
+
+- **Your plan is yours.** Running your own subscriptions through one local router is the same seats doing the same work. Using them to serve inference to *other people* is a different question, and it is a question about your plan's terms, not about Patty.
+- **Quota is finite.** Patty spreads load, it does not create capacity. When every subscription is inside its reset window the honest answer is that no sub can serve the request — which is why a metered API key as the fallback tier is worth setting up if something depends on always getting an answer.
+
+The one hard technical requirement is the Codex CLI version: Patty speaks the app-server protocol, which changes between releases, so it refuses a version it was not built against rather than misbehaving later. `patty doctor` reports which Codex it found.

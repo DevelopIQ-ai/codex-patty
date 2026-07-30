@@ -40,31 +40,27 @@ Set up codex-patty (https://github.com/DevelopIQ-ai/codex-patty) on this machine
        OPENAI_API_KEY=<the cp_live_… key>
    and create a named key per consumer with `patty keys create <name>`.
 5. Then STOP and tell me these two things need me, because you cannot do them:
-   - Adding my real subscriptions: live mode is fail-closed and needs
-     PATTY_ENABLE_LIVE_CODEX=1, a pinned PATTY_CODEX_COMMAND/PATTY_CODEX_VERSION, and an
-     authorization-evidence file I write and attest to myself
-     (see docs/provider-authorization.md). Each sub then signs in through a browser.
+   - Adding my real subscriptions: each one signs in through a browser window, as me.
+     Check the Codex CLI is installed first (`codex --version`); `patty doctor` reports
+     whether Patty found it.
    - Keeping it running as a service, if I want that (docs/operations.md), or putting it
      on an always-on box for an app to use (docs/deploy.md).
 
-Rules: do not weaken the loopback default, do not create the authorization-evidence file
-on my behalf, and do not put any API key in a file you commit.
+Rules: do not weaken the loopback default, do not log into any account on my behalf, and
+do not put any API key in a file you commit.
 ````
 
 Prefer to do it yourself? It's two commands. Run `npx codex-patty --fake=work-sub:0.82 --fake=personal-sub:0.55`, then open <http://127.0.0.1:3210/> and paste in the key it printed. `--fake` makes up subscriptions that behave like real ones — you can watch it choose between them, stream an answer and count tokens without owning a single subscription. That is exactly what the animation above is.
 
 ## Use it with real subs
 
-Using real subscriptions never happens by accident. Patty refuses to start in real mode unless you have written a short file on your own machine saying, in your own words, that you're allowed to run your own subscriptions this way — and unless the Codex program on the machine is the exact version Patty was tested against. If either is missing it simply won't run. [docs/provider-authorization.md](docs/provider-authorization.md) explains why that file exists.
+You need the [Codex CLI](https://developers.openai.com/codex) installed, because that is the thing Patty signs in and talks to. If `codex` is on your PATH there is nothing to configure:
 
 ```sh
-export PATTY_ENABLE_LIVE_CODEX=1
-export PATTY_CODEX_COMMAND=$PWD/node_modules/.bin/codex
-export PATTY_CODEX_VERSION=0.145.0
-export PATTY_AUTHORIZATION_EVIDENCE=$HOME/.patty/authorization.txt   # your own attestation file
-export PATTY_AUTHORIZATION_SHA256=$(sha256sum $HOME/.patty/authorization.txt | cut -d' ' -f1)
 npx codex-patty
 ```
+
+If it lives somewhere else, point at it with `PATTY_CODEX_COMMAND=/path/to/codex`. Patty checks the version before it starts a subscription and refuses one it wasn't built against, because that connection changes between Codex releases and a mismatch fails in confusing ways later. `patty doctor` tells you which Codex it found.
 
 Then add each subscription using the **Add sub** box on the web page (or `patty accounts add <name>`), and sign in in the browser window that Codex opens. Repeat for each one. Every subscription keeps its own login in its own private folder, so they stay signed in even if you restart the computer — on start-up Patty reconnects them and tells you which ones came back:
 
