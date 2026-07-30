@@ -293,3 +293,56 @@ describe('observability', () => {
     expect(ready.data.checks.filter(check => check.hint !== undefined).map(check => check.check)).toEqual(['live_codex']);
   });
 });
+
+describe('OpenAI-compatible provider adapter', () => {
+  const upstream = (handler: (path: string, body: unknown) => Response): typeof fetch => (async (input: string | URL | Request, init?: RequestInit) => handler(new URL(String(input)).pathname, init?.body ? JSON.parse(String(init.body)) : undefined)) as unknown as typeof fetch;
+  const sse = (chunks: string[]) => new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }), { headers: { 'x-ratelimit-remaining-requests': '40', 'x-ratelimit-limit-requests': '100', 'x-ratelimit-reset-requests': '120s' } });
+
+  it('stacks a third-party endpoint, streams its answer and meters its reported usage', async () => {
+    const daemon = new PattyDaemon();
+    const fetchImpl = upstream((path) => path.endsWith('/models')
+      ? new Response(JSON.stringify({ data: [{ id: 'llama-3.3-70b' }, { id: 'gpt-4o-mini' }] }), { headers: { 'content-type': 'application/json', 'x-ratelimit-remaining-requests': '40', 'x-ratelimit-limit-requests': '100' } })
+      : sse(['data: {"choices":[{"delta":{"content":"hello "}}]}\n', 'data: {"choices":[{"delta":{"content":"from llama"}}]}\n', 'data: {"usage":{"prompt_tokens":11,"completion_tokens":3,"total_tokens":14}}\n', 'data: [DONE]\n']));
+    process.env.PATTY_TEST_PROVIDER_KEY = 'sk-not-a-real-key';
+    const account = await daemon.addOpenAiCompatibleAccount('together', 'https://api.example.invalid/v1', 'PATTY_TEST_PROVIDER_KEY', fetchImpl);
+    expect(account.models).toEqual(['llama-3.3-70b', 'gpt-4o-mini']);
+    expect(account.quota.remaining).toBeCloseTo(.4);
+
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'llama-3.3-70b', messages: [{ role: 'user', content: 'hi' }] }) });
+    const body = await response.json() as { choices: { message: { content: string } }[]; usage: { prompt_tokens: number; completion_tokens: number } };
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-patty-sub')).toBe('together');
+    expect(body.choices[0]!.message.content).toBe('hello from llama');
+    expect(body.usage).toMatchObject({ prompt_tokens: 11, completion_tokens: 3 });
+    const usage = await (await fetch(`http://127.0.0.1:${port}/v1/usage`, { headers: { authorization: `Bearer ${daemon.key}` } })).json() as { data: { accounts: { alias: string; totalTokens: number }[] } };
+    expect(usage.data.accounts).toMatchObject([{ alias: 'together', totalTokens: 14 }]);
+    delete process.env.PATTY_TEST_PROVIDER_KEY;
+  });
+
+  it('never persists the provider secret and refuses to run without it', async () => {
+    const daemon = new PattyDaemon();
+    const fetchImpl = upstream(() => new Response(JSON.stringify({ data: [{ id: 'm' }] }), { headers: { 'content-type': 'application/json' } }));
+    process.env.PATTY_TEST_PROVIDER_KEY = 'sk-not-a-real-key';
+    await daemon.addOpenAiCompatibleAccount('byok', 'https://api.example.invalid/v1', 'PATTY_TEST_PROVIDER_KEY', fetchImpl);
+    delete process.env.PATTY_TEST_PROVIDER_KEY;
+    expect(JSON.stringify(daemon.store.accounts())).not.toContain('sk-');
+    const dumped = daemon.store.db.prepare('SELECT * FROM accounts').all().map(row => JSON.stringify(row)).join('');
+    expect(dumped).not.toContain('sk-not-a-real-key');
+    expect(dumped).toContain('byok');
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }) });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: { code: 'upstream_failed' } });
+    expect(daemon.store.runHistory()).toMatchObject([{ alias: 'byok', status: 'failed' }]);
+  });
+
+  it('rejects an unusable configuration instead of storing a broken sub', async () => {
+    const daemon = new PattyDaemon();
+    await expect(daemon.addOpenAiCompatibleAccount('bad', 'ftp://example.invalid', 'KEY')).rejects.toThrow(/http/);
+    await expect(daemon.addOpenAiCompatibleAccount('bad', 'https://example.invalid/v1', 'not a var name')).rejects.toThrow(/environment variable/);
+    expect(daemon.store.accounts()).toHaveLength(0);
+  });
+});

@@ -12,6 +12,7 @@ body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 ui-sans-
 header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:2; }
 header h1 { font-size:16px; margin:0; letter-spacing:.02em; }
 header .tag { color:var(--muted); font-size:12px; }
+.hidden { display:none !important; }
 header .spacer { flex:1; }
 main { padding:20px; display:grid; gap:20px; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); align-items:start; max-width:1600px; }
 section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
@@ -80,9 +81,13 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
     <table><thead><tr><th>Alias</th><th>State</th><th>Quota left</th><th>Health</th><th>Active</th><th>Models</th><th></th></tr></thead><tbody id="accounts"><tr><td colspan="7" class="muted">connect to load</td></tr></tbody></table>
     <div class="row" style="margin-top:12px">
       <input id="alias" class="grow" placeholder="new sub alias" />
-      <select id="mode"><option value="browser">browser</option><option value="device_code">device code</option></select>
+      <select id="mode"><option value="browser">codex · browser</option><option value="device_code">codex · device code</option><option value="openai_compatible">openai-compatible</option></select>
       <button id="add">Add sub</button>
       <button id="refresh-all">Refresh</button>
+    </div>
+    <div class="row hidden" id="byok" style="margin-top:8px">
+      <input id="base-url" class="grow" placeholder="https://api.together.xyz/v1" />
+      <input id="key-env" class="grow" placeholder="TOGETHER_API_KEY (env var name, not the key)" />
     </div>
     <p id="login" class="muted"></p>
   </section>
@@ -300,8 +305,18 @@ el('issue-key').onclick = async () => {
 
 el('connect').onclick = () => { key = el('key').value.trim(); localStorage.setItem('patty.key', key); load(); };
 el('refresh-all').onclick = async () => { const accounts = await api('/v1/accounts'); await Promise.allSettled(accounts.data.map(account => api('/v1/accounts/' + account.id + '/refresh', { method: 'POST' }))); await load(); };
+el('mode').onchange = () => el('byok').classList.toggle('hidden', el('mode').value !== 'openai_compatible');
 el('add').onclick = async () => {
   const alias = el('alias').value.trim(); if (!alias) return;
+  if (el('mode').value === 'openai_compatible') {
+    el('login').className = 'muted'; el('login').textContent = 'contacting provider…';
+    try {
+      const account = await api('/v1/accounts/openai-compatible', { method: 'POST', body: JSON.stringify({ alias, baseUrl: el('base-url').value.trim(), apiKeyEnv: el('key-env').value.trim() }) });
+      el('login').textContent = 'stacked ' + alias + ' with ' + account.models.length + ' model(s); its key is read from ' + el('key-env').value.trim() + ' and never stored';
+      el('alias').value = '';
+    } catch (error) { el('login').className = 'err'; el('login').textContent = 'could not stack: ' + error.message; }
+    await load(); return;
+  }
   el('login').className = 'muted'; el('login').textContent = 'starting login…';
   try {
     const challenge = await api('/v1/accounts/codex/login', { method: 'POST', body: JSON.stringify({ alias, mode: el('mode').value }) });

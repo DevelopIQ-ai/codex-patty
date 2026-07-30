@@ -86,7 +86,7 @@ Patty listens on loopback only unless you explicitly opt in (`PATTY_ALLOW_NON_LO
 
 | | |
 | --- | --- |
-| **Stacking** | Any number of subs, each isolated in its own `CODEX_HOME`; add and remove them at runtime. |
+| **Stacking** | Any number of Codex subs, plus any OpenAI-compatible endpoint (OpenAI, OpenRouter, Together, a local Ollama) via `POST /v1/accounts/openai-compatible` with the key referenced by env-var name, never stored. Any number of subs, each isolated in its own `CODEX_HOME`; add and remove them at runtime. |
 | **Routing** | Per-request selection on remaining quota, health, in-flight runs and model eligibility, under a short transactional lease so two requests can't grab the same slot. Quota is read as the rolling window it is: a sub whose window has already reset counts as full again, and headroom about to expire is preferred as use-it-or-lose-it. The console names the winner and why ("most headroom, 82% vs 55% vs 31%"), so a routing decision is never a black box. |
 | **Failover** | A sub that answers with a 429/usage-limit error is parked until its own reset and the run is retried on another eligible sub, before any output has streamed. |
 | **Streaming** | Runs stream over SSE with sequence IDs, heartbeats, replay for late subscribers, and cancellation by the provider's own turn ID. |

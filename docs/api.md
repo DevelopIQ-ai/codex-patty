@@ -47,3 +47,9 @@ Live SSE subscribers receive normalized provider deltas while connected. Patty p
 `GET /v1/doctor` (`patty doctor`) answers the only question a stuck operator has — can anything serve a request, and if not why — as named checks with a `detail` and, when a check fails, a `hint` naming the fix. `patty status` remains the raw router dump.
 
 The daemon writes one JSON line per request to stdout: timestamp, request id, method, path (without the query string), status, duration, and the routed sub and run when there was one. Prompts, outputs, key secrets and query values are never logged. Set `PATTY_LOG_LEVEL=silent` to turn it off.
+
+## Stacking non-Codex providers
+
+`POST /v1/accounts/openai-compatible {"alias":"together","baseUrl":"https://api.together.xyz/v1","apiKeyEnv":"TOGETHER_API_KEY"}` stacks any OpenAI-compatible endpoint — an OpenAI or OpenRouter key, Together/Fireworks, a local Ollama or vLLM — next to your Codex subs behind the same router, metering, failover and OpenAI-compatible surface.
+
+Patty stores the **name of the environment variable**, never the key: the secret is read from the daemon's environment at call time, so a stolen `patty.sqlite` still contains no provider credential. If the variable is unset when a request routes there, the run fails as `upstream_failed` rather than falling back to an unauthenticated call. Models come from the provider's own `/models`, and remaining quota is derived from the standard `x-ratelimit-*` headers — a provider that reports nothing stays "unknown" (counted as half) rather than being assumed full.

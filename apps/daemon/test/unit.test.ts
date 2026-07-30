@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import type { Account, PattyEvent, ProviderAdapter } from '@patty/contracts';
 import { Coordinator, FakeAdapter, Router, Store, effectiveQuota, eligible, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
 import { PattyDaemon } from '../src/server.js';
@@ -34,7 +37,7 @@ it('enforces persisted exact capabilities', () => { const store=new Store(); con
 
 it('persists normalized started and delta events for late replay', async () => { const store=new Store();const a=account('events');store.addAccount(a);const c=new Coordinator(store,new Router(store),new Map([[a.id,new FakeAdapter()]]));const run=await c.start({model:'gpt-5-codex',input:'x'});await wait();expect(c.eventItems(run).map(item=>item.event.type)).toEqual(['started','delta','usage','completed']); });
 it('deletes dependent account metadata before account rollback', () => { const store=new Store();const a=account('rollback');store.addAccount(a);store.createRun({id:'r',accountId:a.id,fingerprint:'x',status:'running',outputStarted:false,cancelRequested:false});store.setCapabilities(a.id,['shell']);store.deleteAccountCascade(a.id);expect(store.account(a.id)).toBeUndefined();expect(store.run('r')).toBeUndefined(); });
-it('upgrades an unversioned accounts schema before migration versions are recorded', () => { const path=`/tmp/patty-legacy-${Date.now()}.sqlite`; const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(path);db.exec("CREATE TABLE accounts(id TEXT PRIMARY KEY,alias TEXT,state TEXT,models TEXT,quota TEXT,health REAL,active_runs INTEGER,cooldown_until TEXT); CREATE TABLE api_keys(id TEXT PRIMARY KEY,prefix TEXT,hash TEXT,revoked_at TEXT,last_used_at TEXT,created_at TEXT); CREATE TABLE runs(id TEXT PRIMARY KEY,account_id TEXT,thread_id TEXT,fingerprint TEXT,idempotency_key TEXT,status TEXT,created_at TEXT); CREATE TABLE routing_leases(account_id TEXT PRIMARY KEY,run_id TEXT,expires_at TEXT);");db.close();const upgraded=new Store(path);const columns=upgraded.db.prepare('PRAGMA table_info(accounts)').all() as {name:string}[];expect(columns.some(c=>c.name==='home_ref')).toBe(true);expect(upgraded.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toMatchObject({n:5}); });
+it('upgrades an unversioned accounts schema before migration versions are recorded', () => { const path=`/tmp/patty-legacy-${Date.now()}.sqlite`; const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(path);db.exec("CREATE TABLE accounts(id TEXT PRIMARY KEY,alias TEXT,state TEXT,models TEXT,quota TEXT,health REAL,active_runs INTEGER,cooldown_until TEXT); CREATE TABLE api_keys(id TEXT PRIMARY KEY,prefix TEXT,hash TEXT,revoked_at TEXT,last_used_at TEXT,created_at TEXT); CREATE TABLE runs(id TEXT PRIMARY KEY,account_id TEXT,thread_id TEXT,fingerprint TEXT,idempotency_key TEXT,status TEXT,created_at TEXT); CREATE TABLE routing_leases(account_id TEXT PRIMARY KEY,run_id TEXT,expires_at TEXT);");db.close();const upgraded=new Store(path);const columns=upgraded.db.prepare('PRAGMA table_info(accounts)').all() as {name:string}[];expect(columns.some(c=>c.name==='home_ref')).toBe(true);expect(upgraded.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toMatchObject({n:6}); });
 
 it('fails over once before output and records an alternate attempt', async () => { const store=new Store();const first=account('first');const second=account('second');store.addAccount(first);store.addAccount(second);const failing:ProviderAdapter={login:async()=>({}),cancelLogin:async()=>{},snapshot:async()=>({models:[],quota:{observedAt:now()}}),createThread:async(_model:string)=>'',run:async()=>{throw new Error('early')},interrupt:async()=>{},approve:async()=>{},logout:async()=>{},health:async()=>true,shutdown:async()=>{}};const c=new Coordinator(store,new Router(store),new Map([[first.id,failing],[second.id,new FakeAdapter()]]));const run=await c.start({model:'gpt-5-codex',input:'x',accountId:first.id});await new Promise(resolve=>setTimeout(resolve,10));expect(store.publicRun(run)?.status).toBe('completed');expect((store.db.prepare('SELECT COUNT(*) AS n FROM run_attempts WHERE run_id=?').get(run) as {n:number}).n).toBe(2); });
 
@@ -157,5 +160,26 @@ describe('bind guard', () => {
     expect(() => PattyDaemon.assertBindable('100.64.0.7')).toThrow(/PATTY_ALLOW_NON_LOOPBACK=1/);
     expect(() => PattyDaemon.assertBindable('100.64.0.7', true)).not.toThrow();
     for (const wildcard of ['0.0.0.0', '::', '']) expect(() => PattyDaemon.assertBindable(wildcard, true)).toThrow(/wildcard/);
+  });
+});
+
+describe('provider configs survive a restart without holding a secret', () => {
+  it('remembers the endpoint and env var name, and re-attaches the sub at boot', async () => {
+    const file = join(tmpdir(), `patty-provider-${randomUUID()}.sqlite`);
+    process.env.PATTY_TEST_RESTORE_KEY = 'sk-not-a-real-key';
+    const fetchImpl = (async () => new Response(JSON.stringify({ data: [{ id: 'llama-3.3-70b' }] }), { headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const first = new PattyDaemon(file);
+    const account = await first.addOpenAiCompatibleAccount('together', 'https://api.example.invalid/v1', 'PATTY_TEST_RESTORE_KEY', fetchImpl);
+    first.store.close();
+
+    const rebooted = new PattyDaemon(file);
+    expect(rebooted.store.account(account.id)!.state).toBe('reconnect_required');
+    const restored = await rebooted.restoreOpenAiCompatibleAccounts();
+    expect(restored.map(entry => entry.alias)).toEqual(['together']);
+    expect(rebooted.store.account(account.id)!.state).toBe('ready');
+    expect(rebooted.store.providerConfigs()).toEqual([{ accountId: account.id, kind: 'openai_compatible', config: { baseUrl: 'https://api.example.invalid/v1', apiKeyEnv: 'PATTY_TEST_RESTORE_KEY' } }]);
+    expect(JSON.stringify(rebooted.store.providerConfigs())).not.toContain('sk-not-a-real-key');
+    rebooted.store.close();
+    delete process.env.PATTY_TEST_RESTORE_KEY;
   });
 });
