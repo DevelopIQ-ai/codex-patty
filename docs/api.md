@@ -19,6 +19,8 @@ Two consequences worth knowing:
 - **A request carrying tools requires the `tools` capability**, so it can only be routed to a sub whose provider honours them — today the OpenAI-compatible subs. A Codex app-server sub runs its own agent loop and cannot expose the caller's functions, so it is never chosen for such a request. When no stacked sub can serve the model *with* tools the answer is `400 model_unavailable` naming that, rather than a silently toolless completion or a routing failure the caller would retry.
 - **The verbatim messages are forwarded** instead of the flattened prompt, because a tool round trip includes an assistant turn whose content is `null` and a `tool` message answering a specific `tool_call_id` — neither survives flattening. Tool calls are provider content, so they are never persisted: `run_events` records that a `tool_calls` event happened and nothing about it, and a caller reading a run back after its in-process buffer has expired sees text and token counts only.
 
+The same tools can be offered on Patty's own `POST /v1/runs` by sending a `chat` turn (`{messages, tools, toolChoice}`) alongside `model`/`input` — the capability gate and the `400 model_unavailable` answer are identical. The calls arrive on the run's event stream as a `tool_calls` event, which is what the console's **offer tools** box in the Inference panel uses.
+
 `GET /v1/models` returns OpenAI's list shape (`{object:'list',data:[{id,object:'model',owned_by}]}`) with a Patty-specific `subs` array naming which stacked subs can serve each model.
 
 ## Routing and quota windows

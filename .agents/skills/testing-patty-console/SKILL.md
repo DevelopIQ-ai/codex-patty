@@ -203,6 +203,30 @@ run it; keep live state in its own DB/home root so fake-mode testing cannot clob
 - A malformed prices file must fail at boot: the process exits non-zero with `price for <model> needs numeric input and
   output` and never listens. Assert the port is closed too, so a silent fallback to the built-in table cannot pass.
 
+## Console tools box and real cached tokens (PR #18)
+- The Inference panel can now send tools: checkbox `#use-tools` toggles the `hidden` class on textarea `#tools`
+  (prefilled with a `get_weather` function). Sending posts `POST /v1/runs {model, input, chat:{messages, tools}}`,
+  then subscribes to SSE; the pane renders `tool call · <name>(<arguments>)` and `#run-meta` gains `· completed`.
+  Errors (including API error **codes**) land in `#run-meta` as red text.
+- Because the console *posts then subscribes*, tool calls in the console depend on the server substituting
+  `coordinator.liveCalls(runId)` for the persisted `{"redacted":true}` event on replay. If the pane shows nothing or
+  `redacted` while the API path works, suspect that substitution rather than the UI.
+- Keep the fixture streaming tool-call arguments in **two** fragments — a non-assembling implementation prints the
+  first fragment only, which is the cheapest discriminator available.
+- Malformed JSON must be caught client-side *before* any fetch: assert both the red inline message and that no run
+  was created (`/v1/runs` count unchanged **and** the provider log gained no request line).
+- Capability gating now also applies to `/v1/runs`. Note the console displays only the error code
+  (`model_unavailable`), not the API's descriptive `message` — check the message via an authenticated request.
+  A page reload resets the model select and the tools checkbox, so re-select both after mutating capabilities.
+- `account_capabilities.capabilities` is a JSON array; the openai-compatible adapter does **not** re-snapshot it, so
+  `UPDATE … SET capabilities='["chat"]'` sticks (unlike `accounts.quota`, which fake subs do re-snapshot).
+- Cached/reasoning tokens now come from the provider: `prompt_tokens_details.cached_tokens` and
+  `completion_tokens_details.reasoning_tokens`. A fixture reporting 1000/800/100 gives per-run
+  `cachedInputTokens 800`, `reasoningOutputTokens 40`, and the console `Cached in` / `Reasoning out` cards.
+- The strongest pricing discriminator is a **restart on the same file-backed DB with `cachedInput` removed** from
+  `PATTY_PRICES`: existing runs must reprice (e.g. `$0.0128` → `$0.02` per run). If the totals don't move, cached
+  tokens are not being carried. Prices load at boot, so a restart is mandatory.
+
 ## Devin Secrets Needed
 - None for fake/`--fake` mode.
 - Live mode needs no Devin secret, but does need operator-supplied material that cannot be self-served: real logged-in
