@@ -82,5 +82,12 @@ export class PattyDaemon { store:Store; router:Router; coordinator:Coordinator; 
   ];
   return {ok:checks.every(check=>check.ok),checks:checks.map(({hint,...check})=>({...check,...(hint?{hint}:{})}))};}
  async shutdown(){await this.coordinator.shutdown();}
- listen(port=0,host='127.0.0.1'){if(host!=='127.0.0.1'&&host!=='::1')throw new Error('loopback binding is mandatory');const server=createServer(this.handler.bind(this));return new Promise<typeof server>(resolve=>server.listen(port,host,()=>resolve(server)));}
+ /** Loopback stays the default and the only unguarded option: a non-loopback bind exposes stacked
+  * subscriptions to the network, so it requires an explicit opt-in and never a wildcard address. */
+ static assertBindable(host:string,optedIn=process.env.PATTY_ALLOW_NON_LOOPBACK==='1'){
+  if(host==='127.0.0.1'||host==='::1'||host==='localhost')return;
+  if(!optedIn)throw new Error(`refusing to bind ${host}: loopback is the default; set PATTY_ALLOW_NON_LOOPBACK=1 to expose Patty on a trusted network`);
+  if(host==='0.0.0.0'||host==='::'||host==='')throw new Error('refusing to bind a wildcard address: name the exact interface (for example your tailnet address)');
+ }
+ listen(port=0,host='127.0.0.1'){PattyDaemon.assertBindable(host);const server=createServer(this.handler.bind(this));return new Promise<typeof server>(resolve=>server.listen(port,host,()=>resolve(server)));}
 }

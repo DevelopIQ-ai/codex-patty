@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Account, PattyEvent, ProviderAdapter } from '@patty/contracts';
 import { Coordinator, FakeAdapter, Router, Store, effectiveQuota, eligible, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
+import { PattyDaemon } from '../src/server.js';
 const account = (id: string, remaining = 1): Account => ({ id, alias: id, state: 'ready', models: ['gpt-5-codex'], quota: { remaining, observedAt: now() }, health: 1, activeRuns: 0 });
 const wait = () => new Promise(resolve => setTimeout(resolve, 0));
 class ControlledAdapter implements ProviderAdapter {
@@ -147,5 +148,14 @@ describe('named keys and per-key attribution', () => {
     await new Promise(resolve => setTimeout(resolve, 30));
     store.revokeKey(key.id);
     expect(store.usageReport().keys).toMatchObject([{ keyId: key.id, name: 'short-lived', runs: 1 }]);
+  });
+});
+
+describe('bind guard', () => {
+  it('allows loopback, refuses anything else without an explicit opt-in, and never allows a wildcard', () => {
+    for (const host of ['127.0.0.1', '::1', 'localhost']) expect(() => PattyDaemon.assertBindable(host)).not.toThrow();
+    expect(() => PattyDaemon.assertBindable('100.64.0.7')).toThrow(/PATTY_ALLOW_NON_LOOPBACK=1/);
+    expect(() => PattyDaemon.assertBindable('100.64.0.7', true)).not.toThrow();
+    for (const wildcard of ['0.0.0.0', '::', '']) expect(() => PattyDaemon.assertBindable(wildcard, true)).toThrow(/wildcard/);
   });
 });

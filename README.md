@@ -80,7 +80,7 @@ Restart=on-failure
 WantedBy=default.target
 ```
 
-On macOS use a launchd agent with the same command. Full details, including the live-mode variables a service needs, are in [docs/operations.md](docs/operations.md).
+Patty listens on loopback only unless you explicitly opt in (`PATTY_ALLOW_NON_LOOPBACK=1` plus a specific `PATTY_HOST`; wildcards are always refused). On macOS use a launchd agent with the same command. Full details, including the live-mode variables a service needs, are in [docs/operations.md](docs/operations.md).
 
 ## What it does
 

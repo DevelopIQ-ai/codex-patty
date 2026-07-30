@@ -17,3 +17,13 @@ Codex itself may persist its managed credentials in each isolated `CODEX_HOME` s
 The launcher dispatches on its first argument: absent, `start`, `up` or a `--flag` starts the daemon; anything else is a CLI command. `pattyd` and `patty` remain available as direct bins.
 
 Under a service manager, the daemon needs only `PATTY_DB_PATH` (and, for live subs, the same live-mode variables listed above, including the authorization evidence path and digest — a service that lacks them starts in fake/offline mode by design rather than silently bypassing the gate). Use `Restart=on-failure`; the store reconciles in-flight runs transactionally at boot, so an abrupt restart cannot leave a sub with phantom active runs.
+
+## Binding beyond loopback
+
+The daemon binds `127.0.0.1` by default and that is the only unguarded option, because a stacked Patty is an unmetered gateway to every subscription it holds. `PATTY_HOST` chooses the interface, and a non-loopback value additionally requires `PATTY_ALLOW_NON_LOOPBACK=1`:
+
+```sh
+PATTY_ALLOW_NON_LOOPBACK=1 PATTY_HOST=100.64.0.7 codex-patty   # a tailnet address, for example
+```
+
+Wildcard addresses (`0.0.0.0`, `::`, empty) are refused even with the opt-in — name the exact interface, so exposure is a decision rather than a default. Keys are the only authentication on the wire and Patty speaks plain HTTP, so anything beyond loopback belongs on a private network (a tailnet, a WireGuard interface) or behind a TLS-terminating reverse proxy, with a separate named key per consumer so a leak is revocable on its own.
