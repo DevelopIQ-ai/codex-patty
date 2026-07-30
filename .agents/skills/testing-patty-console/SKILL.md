@@ -163,8 +163,45 @@ run it; keep live state in its own DB/home root so fake-mode testing cannot clob
   are hammering, an unlimited key's request can be rejected with `400 invalid_request` because no sub is servable —
   don't misread that as a key-limit failure. For key-isolation tests, keep the saturated key's concurrency below the
   sub's cap (e.g. `1`) so the second key still has a sub slot.
-- openai-compatible runs currently record Model `—` and 0 tokens in Run history even when the provider reports usage,
-  so verify per-key/per-sub metering with the fake Codex subs instead.
+- openai-compatible runs used to record Model `—` and 0 tokens in Run history; as of the cost work they are metered
+  from the provider's own `usage` block (e.g. 42 in / 11 out shows up per run). If you see `—`/0 again, that is a
+  regression, not expected behaviour.
+
+## Tool/function calling (`/v1/chat/completions`)
+- There is **no console UI path for `tools`** — the Inference box cannot send them. Verify tool calling with
+  authenticated shell requests plus SQLite reads, and use Run history only to show which sub served the tool runs.
+- Use a tool-capable fixture provider (see `/home/ubuntu/tool-provider.mjs`: model `tooly-1`, streams the arguments in
+  **two** SSE fragments). The split fragments are the discriminator: a non-assembling implementation yields truncated
+  or duplicated `arguments`, so assert the exact assembled JSON string, not just that `tool_calls` exists.
+- Expected non-streaming shape: `message.content: null`, `message.tool_calls[...]`, `finish_reason: "tool_calls"`.
+  Streaming emits an extra chunk with index-stamped `choices[0].delta.tool_calls` before the `finish_reason` chunk.
+- Redaction: `run_events` rows of type `delta` **and** `tool_calls` must store exactly `{"redacted":true}`. Query the
+  `data` column (not `payload`), and use single-quoted SQL literals — `"tool_calls"` is parsed as an identifier.
+  A good leak check is `SELECT count(*) FROM run_events WHERE data LIKE '%<arg value>%' OR data LIKE '%<fn name>%'`.
+- Capability gating: only subs advertising `tools` are eligible; otherwise the API returns non-retryable
+  `400 model_unavailable`. To test it, rewrite the account's capabilities in SQLite to drop `tools`, then prove the
+  same model **without** `tools` still returns 200 — otherwise you have only proven the provider is dead. Restore
+  `["chat","tools"]` afterwards.
+
+## Cost / $ view and `PATTY_PRICES`
+- Console cost cards are `#t-saved` (absorbed by your subs), `#t-api` (spent on API fallback), `#t-cost` (estimated
+  total) and the `#cost-note` sentence; `#per-account` and `#per-key` gain an `Est. cost` column with a
+  `+N unpriced` badge.
+- A model with no price must be reported as **unpriced**, never `$0`: `cost.unpricedRuns`/`unpricedModels` populated and
+  each such run's `estimatedCostUsd: null`. A fixture model like `tooly-1` is unpriced by default, which makes the
+  unpriced state easy to produce; the priced state needs `PATTY_PRICES`.
+- Prices are **USD per million tokens** and are loaded once at `Store` construction, so `PATTY_PRICES` changes require a
+  daemon restart — restart against the same `PATTY_DB_PATH` so existing usage rows get re-priced.
+- Put a shorter decoy prefix in the prices file (e.g. `"tooly"` at an absurd rate alongside `"tooly-1"`) to prove
+  longest-prefix-wins; a wrong implementation produces a cost ~100x off.
+- Cached input is priced at `cachedInput` for the cached portion and `input` for the remainder. No fixture reports
+  cached tokens, so insert a synthetic `usage_events` row (e.g. 1,000,000 input / 400,000 cached / 0 output) and assert
+  the exact figure (with 1.25/0.125 that is `$0.80`; `$1.25` means cached billed at full rate, `$0.75` means ignored).
+  Delete the row afterwards — it also shows up as an `unattributed` key row in Usage per key.
+- Tier decides the bucket: `primary` cost → `subscriptionUsd` (list-price-equivalent, not spend), `fallback` → `apiUsd`.
+  Cross-check `/metrics` `patty_estimated_cost_usd_total{sub,tier}` and `patty_unpriced_runs` against the cards.
+- A malformed prices file must fail at boot: the process exits non-zero with `price for <model> needs numeric input and
+  output` and never listens. Assert the port is closed too, so a silent fallback to the built-in table cannot pass.
 
 ## Console tools box and real cached tokens (PR #18)
 - The Inference panel can now send tools: checkbox `#use-tools` toggles the `hidden` class on textarea `#tools`
