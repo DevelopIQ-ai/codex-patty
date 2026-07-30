@@ -40,13 +40,22 @@ PATTY_PORT=3211 node apps/daemon/dist/src/main.js --fake=sub-a --fake=sub-b:0.4
   discriminated in the UI with unequal quotas** — both threaded and unthreaded sends land on the same sub anyway.
   To make it a real test, give both subs equal quota (e.g. `--fake=a:0.5 --fake=b:0.5`) or verify the shared
   `thread_id`/`account_id` in `.patty/patty.sqlite`.
-- Persisted deltas are stored **redacted** (`{"redacted":true}`); only live SSE deltas carry text. Because the console
-  subscribes to `/v1/runs/{id}/events` only after 2–3 sequential API calls, the instantaneous fake-worker delta is
-  already gone and the output pane may stay empty. If you see a blank output pane, this race (not your setup) is the
-  likely cause — check `curl -H "authorization: Bearer $KEY" .../v1/runs/<id>/events` to see whether the delta
-  arrived redacted.
-- `DELETE /v1/accounts/{id}` (the `remove` button) is a soft delete: it sets `state='removed'` and the row **stays
-  visible** in the Subs and Router tables. Do not assume the row disappears.
+- Provider text is **never persisted**: `run_events` stores deltas as `{"redacted":true}`. Live text survives only in
+  `Coordinator.liveTexts`, a bounded in-process buffer (64 KiB cap, dropped 60s after the run goes terminal), and the
+  SSE handler substitutes it for the *first* replayed `delta` so a late subscriber still sees the current turn.
+  Verifying the output pane is therefore a two-sided check: the pane should show `fake: <prompt>` **exactly once**
+  (a missing `replayedText` guard would duplicate it), while the SQLite `run_events` delta row must still read
+  `{"redacted":true}`. If the pane is blank, suspect the buffer/subscribe ordering rather than your setup — the console
+  must start `subscribe()` concurrently with the `/v1/runs/:id` + `/v1/accounts` metadata fetches, because the fake
+  worker emits its delta synchronously. Also note run-meta is composed via a `meta(base, suffix)` helper precisely so
+  the concurrent stream cannot clobber the `routed to <alias>` line — assert the whole string
+  `run … routed to <alias> · N in / M out tokens · completed`, not just fragments.
+- `DELETE /v1/accounts/{id}` (the `remove` button) is a **soft delete**: the row stays in SQLite with `state='removed'`,
+  and `/v1/accounts`, `/v1/models` and `/v1/router/status` filter it out while `/v1/usage` deliberately does not.
+  So the correct expectation is asymmetric — a removed sub must vanish from the Subs and Router tables **but keep its
+  "Usage per sub" row and its contribution to the Usage cards**. Test it by removing a sub that has already served a
+  run; that single step catches both a tombstone regression (row lingering with a `removed` pill) and an
+  over-aggressive hard-delete/cascade (usage history disappearing).
 - Auth sanity checks: `GET /` and `/healthz` are unauthenticated (HTML 200 / `{"ok":true}`); every `/v1/*` route needs
   `authorization: Bearer cp_live_…` and returns 401 otherwise.
 
