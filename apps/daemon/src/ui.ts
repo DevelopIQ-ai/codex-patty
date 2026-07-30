@@ -156,6 +156,8 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 <script type="module">
 const el = id => document.getElementById(id);
 const fmt = value => Number(value ?? 0).toLocaleString();
+/** A provider that reports no counters leaves a run unmetered, which is not the same as a run that cost nothing. */
+const tokens = value => value === null || value === undefined ? '<span class="muted" title="this provider reported no token counts">not reported</span>' : fmt(value);
 let key = localStorage.getItem('patty.key') ?? '';
 let threadId = null, runId = null, stream = null;
 el('key').value = key;
@@ -266,7 +268,7 @@ function renderHistory(runs) {
     <td><code>\${run.runId}</code></td><td><code>\${run.alias}</code></td><td class="muted">\${keyLabel(run.keyName, run.keyId, run.keyPrefix)}</td>
     <td class="muted">\${run.model ?? '—'}</td><td class="\${run.status === 'completed' ? 'ok' : run.status === 'failed' ? 'err' : 'muted'}">\${run.status}</td>
     <td class="\${run.attempts > 1 ? 'warn' : 'muted'}">\${run.attempts}</td>
-    <td>\${fmt(run.inputTokens)}</td><td>\${fmt(run.outputTokens)}</td><td>\${fmt(run.totalTokens)}</td>
+    <td>\${tokens(run.inputTokens)}</td><td>\${tokens(run.outputTokens)}</td><td>\${tokens(run.totalTokens)}</td>
     <td class="muted">\${new Date(run.createdAt).toLocaleTimeString()}</td></tr>\`).join('') : '<tr><td colspan="10" class="muted">no runs match these filters</td></tr>';
   el('runs-count').textContent = runs.length + ' run(s)';
 }

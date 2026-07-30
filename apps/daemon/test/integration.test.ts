@@ -439,3 +439,25 @@ describe('per-key rate limits and queueing', () => {
     expect(await cleared.json()).toEqual({ id: issued.id });
   });
 });
+
+it('answers a saturated stack with a retryable 503 rather than a fatal 400', async () => {
+  const daemon = new PattyDaemon(); const account = daemon.addFakeAccount('busy'); server = await daemon.listen();
+  const port = (server.address() as { port: number }).port; const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+  daemon.store.updateAccount({ ...account, activeRuns: 2 });
+  const response = await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'x' }) });
+  expect(response.status).toBe(503);
+  expect(response.headers.get('retry-after')).toBe('5');
+  const body = await response.json() as { error: { code: string; retryable: boolean; retryAfterMs: number } };
+  expect(body.error).toMatchObject({ code: 'no_eligible_account', retryable: true, retryAfterMs: 5_000 });
+});
+
+it('names the model in run history even when the provider reports no usage', async () => {
+  const daemon = new PattyDaemon(); daemon.addFakeAccount('unmetered'); server = await daemon.listen();
+  const port = (server.address() as { port: number }).port; const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+  const { id } = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'x' }) })).json() as { id: string };
+  daemon.store.db.prepare('DELETE FROM usage_events WHERE run_id=?').run(id);
+  const history = await (await fetch(`http://127.0.0.1:${port}/v1/runs?model=gpt-5-codex`, { headers })).json() as { data: { runId: string; model: string | null; totalTokens: number | null }[] };
+  const row = history.data.find(entry => entry.runId === id);
+  expect(row?.model).toBe('gpt-5-codex');
+  expect(row?.totalTokens).toBeNull();
+});

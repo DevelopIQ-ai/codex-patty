@@ -36,9 +36,13 @@ A burst over a limit is queued rather than rejected: up to `PATTY_KEY_QUEUE_MAX`
 
 Every run records the key that started it, and usage inherits that attribution from the run, so `GET /v1/usage` reports totals per key as well as per sub. Attribution survives revocation — history should not rewrite itself — and runs made before named keys existed report `keyId: null`, labelled `unattributed` rather than silently folded into a real key.
 
+## When no sub can serve a request
+
+If every eligible sub is busy, cooling down or out of quota, the request is answered `503` with `{"error":{"code":"no_eligible_account","retryable":true,"retryAfterMs":5000}}` and a `Retry-After: 5` header. This is a capacity condition, not a malformed request: a client should back off and retry rather than treat it as fatal.
+
 ## Usage metering
 
-`GET /v1/usage` returns token totals, per-sub aggregates, and the most recent measured runs. Patty persists only provider-reported counts (input, cached input, output, reasoning output, total) keyed by run, sub, and model — never prompts or generated text. A run's row is replaced by each newer provider snapshot, so totals stay exact when a turn reports usage more than once.
+`GET /v1/usage` returns token totals, per-sub aggregates, and the most recent measured runs. Patty persists only provider-reported counts (input, cached input, output, reasoning output, total) keyed by run, sub, and model — never prompts or generated text. Counts come from the provider alone; a provider that reports none (an OpenAI-compatible endpoint that ignores `stream_options.include_usage`, for instance) leaves the run unmetered, and `GET /v1/runs` returns null token fields for it while still naming the model the run asked for. The console shows those as `not reported`, which is deliberately distinct from zero. A run's row is replaced by each newer provider snapshot, so totals stay exact when a turn reports usage more than once.
 
 ## Streaming privacy
 
