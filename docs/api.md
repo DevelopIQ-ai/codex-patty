@@ -28,6 +28,12 @@ When a provider rejects a turn with a rate-limit/usage-limit/429 error before an
 
 `POST /v1/api-keys {"name":"puffle-prod"}` issues a named key and returns the secret **once**; `GET /v1/api-keys` lists id, name, prefix, creation, last use and revocation state but never the secret; `DELETE /v1/api-keys/{id}` revokes one key without touching the others. Give every consumer its own key (`puffle-prod`, `puffle-dev`, a laptop, a CI job) and revocation stays surgical.
 
+### Rate limits and queueing
+
+`PUT /v1/api-keys/{id}/limits {"rpm":60,"concurrency":4}` caps a key; `patty keys limit <id> 60 4` does the same from the CLI, and `none` (or a null/omitted field) clears a limit. The body is the key's complete policy, so a PUT that omits `rpm` makes requests-per-minute unlimited again. `rpm` counts requests started in a rolling minute; `concurrency` counts runs in flight, and a slot is held until the run **settles**, not until the HTTP response is written — an async `POST /v1/runs` occupies its slot for the whole run.
+
+A burst over a limit is queued rather than rejected: up to `PATTY_KEY_QUEUE_MAX` (default 64) requests wait per key for up to `PATTY_KEY_QUEUE_WAIT_MS` (default 20s), and only what still cannot be served is answered `429 rate_limited` with a `Retry-After` header and `error.retryAfterMs`. Queues are per key and in-process, so one noisy consumer can never starve another and nothing about a burst survives a restart. `GET /v1/api-keys` reports each key's limits plus live `inFlight`, `queued` and `throttled` counts, and `/metrics` exposes `patty_key_in_flight`, `patty_key_queued`, `patty_key_throttled_total`, `patty_key_limit_rpm` and `patty_key_limit_concurrency`.
+
 Every run records the key that started it, and usage inherits that attribution from the run, so `GET /v1/usage` reports totals per key as well as per sub. Attribution survives revocation — history should not rewrite itself — and runs made before named keys existed report `keyId: null`, labelled `unattributed` rather than silently folded into a real key.
 
 ## Usage metering

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { Account, PattyEvent, ProviderAdapter } from '@patty/contracts';
-import { Coordinator, FakeAdapter, Router, Store, effectiveQuota, eligible, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
+import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
 import { PattyDaemon } from '../src/server.js';
 const account = (id: string, remaining = 1, tier: Account['tier'] = 'primary'): Account => ({ id, alias: id, tier, state: 'ready', models: ['gpt-5-codex'], quota: { remaining, observedAt: now() }, health: 1, activeRuns: 0 });
 const wait = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -48,7 +48,7 @@ it('enforces persisted exact capabilities', () => { const store=new Store(); con
 
 it('persists normalized started and delta events for late replay', async () => { const store=new Store();const a=account('events');store.addAccount(a);const c=new Coordinator(store,new Router(store),new Map([[a.id,new FakeAdapter()]]));const run=await c.start({model:'gpt-5-codex',input:'x'});await wait();expect(c.eventItems(run).map(item=>item.event.type)).toEqual(['started','delta','usage','completed']); });
 it('deletes dependent account metadata before account rollback', () => { const store=new Store();const a=account('rollback');store.addAccount(a);store.createRun({id:'r',accountId:a.id,fingerprint:'x',status:'running',outputStarted:false,cancelRequested:false});store.setCapabilities(a.id,['shell']);store.deleteAccountCascade(a.id);expect(store.account(a.id)).toBeUndefined();expect(store.run('r')).toBeUndefined(); });
-it('upgrades an unversioned accounts schema before migration versions are recorded', () => { const path=`/tmp/patty-legacy-${Date.now()}.sqlite`; const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(path);db.exec("CREATE TABLE accounts(id TEXT PRIMARY KEY,alias TEXT,state TEXT,models TEXT,quota TEXT,health REAL,active_runs INTEGER,cooldown_until TEXT); CREATE TABLE api_keys(id TEXT PRIMARY KEY,prefix TEXT,hash TEXT,revoked_at TEXT,last_used_at TEXT,created_at TEXT); CREATE TABLE runs(id TEXT PRIMARY KEY,account_id TEXT,thread_id TEXT,fingerprint TEXT,idempotency_key TEXT,status TEXT,created_at TEXT); CREATE TABLE routing_leases(account_id TEXT PRIMARY KEY,run_id TEXT,expires_at TEXT);");db.close();const upgraded=new Store(path);const columns=upgraded.db.prepare('PRAGMA table_info(accounts)').all() as {name:string}[];expect(columns.some(c=>c.name==='home_ref')).toBe(true);expect(upgraded.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toMatchObject({n:7}); });
+it('upgrades an unversioned accounts schema before migration versions are recorded', () => { const path=`/tmp/patty-legacy-${Date.now()}.sqlite`; const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(path);db.exec("CREATE TABLE accounts(id TEXT PRIMARY KEY,alias TEXT,state TEXT,models TEXT,quota TEXT,health REAL,active_runs INTEGER,cooldown_until TEXT); CREATE TABLE api_keys(id TEXT PRIMARY KEY,prefix TEXT,hash TEXT,revoked_at TEXT,last_used_at TEXT,created_at TEXT); CREATE TABLE runs(id TEXT PRIMARY KEY,account_id TEXT,thread_id TEXT,fingerprint TEXT,idempotency_key TEXT,status TEXT,created_at TEXT); CREATE TABLE routing_leases(account_id TEXT PRIMARY KEY,run_id TEXT,expires_at TEXT);");db.close();const upgraded=new Store(path);const columns=upgraded.db.prepare('PRAGMA table_info(accounts)').all() as {name:string}[];expect(columns.some(c=>c.name==='home_ref')).toBe(true);expect(upgraded.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toMatchObject({n:8}); });
 
 it('fails over once before output and records an alternate attempt', async () => { const store=new Store();const first=account('first');const second=account('second');store.addAccount(first);store.addAccount(second);const failing:ProviderAdapter={login:async()=>({}),cancelLogin:async()=>{},snapshot:async()=>({models:[],quota:{observedAt:now()}}),createThread:async(_model:string)=>'',run:async()=>{throw new Error('early')},interrupt:async()=>{},approve:async()=>{},logout:async()=>{},health:async()=>true,shutdown:async()=>{}};const c=new Coordinator(store,new Router(store),new Map([[first.id,failing],[second.id,new FakeAdapter()]]));const run=await c.start({model:'gpt-5-codex',input:'x',accountId:first.id});await new Promise(resolve=>setTimeout(resolve,10));expect(store.publicRun(run)?.status).toBe('completed');expect((store.db.prepare('SELECT COUNT(*) AS n FROM run_attempts WHERE run_id=?').get(run) as {n:number}).n).toBe(2); });
 
@@ -192,5 +192,72 @@ describe('provider configs survive a restart without holding a secret', () => {
     expect(JSON.stringify(rebooted.store.providerConfigs())).not.toContain('sk-not-a-real-key');
     rebooted.store.close();
     delete process.env.PATTY_TEST_RESTORE_KEY;
+  });
+});
+
+describe('per-key admission control', () => {
+  it('lets an unlimited key straight through without allocating a gate', async () => {
+    const limiter = new KeyLimiter(() => ({}));
+    await (await limiter.acquire('free'))();
+    expect(limiter.pressure('free')).toEqual({ inFlight: 0, queued: 0, throttled: 0 });
+  });
+
+  it('queues past a concurrency limit and admits the waiter when a run settles, rather than failing it', async () => {
+    const limiter = new KeyLimiter(() => ({ concurrency: 1 }));
+    const first = await limiter.acquire('k');
+    let admitted = false;
+    const second = limiter.acquire('k').then(release => { admitted = true; return release; });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    expect(admitted).toBe(false);
+    expect(limiter.pressure('k')).toMatchObject({ inFlight: 1, queued: 1 });
+    first();
+    await second;
+    expect(admitted).toBe(true);
+    expect(limiter.pressure('k')).toMatchObject({ inFlight: 1, queued: 0, throttled: 0 });
+  });
+
+  it('holds one key\'s burst without touching another key', async () => {
+    const limiter = new KeyLimiter(() => ({ concurrency: 1 }));
+    await limiter.acquire('noisy');
+    void limiter.acquire('noisy');
+    await new Promise(resolve => setTimeout(resolve, 5));
+    expect(limiter.pressure('noisy').queued).toBe(1);
+    await expect(limiter.acquire('quiet')).resolves.toBeTypeOf('function');
+  });
+
+  it('answers rate_limited with the wait to the next slot once queueing cannot beat the deadline', async () => {
+    const limiter = new KeyLimiter(() => ({ rpm: 1 }), 64, 50);
+    await limiter.acquire('k');
+    const denied = await limiter.acquire('k').catch(error => error as RateLimited);
+    expect(denied).toBeInstanceOf(RateLimited);
+    expect((denied as RateLimited).retryAfterMs).toBeGreaterThan(50_000);
+    expect(limiter.pressure('k').throttled).toBe(1);
+  });
+
+  it('refuses immediately when the queue is already full instead of growing it without bound', async () => {
+    const limiter = new KeyLimiter(() => ({ concurrency: 1 }), 1, 60_000);
+    await limiter.acquire('k');
+    void limiter.acquire('k').catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await expect(limiter.acquire('k')).rejects.toBeInstanceOf(RateLimited);
+  });
+
+  it('keeps the rolling minute across finished requests, so a fast key cannot reset its own rpm budget', async () => {
+    const limiter = new KeyLimiter(() => ({ rpm: 2 }), 64, 10);
+    (await limiter.acquire('k'))();
+    (await limiter.acquire('k'))();
+    await expect(limiter.acquire('k')).rejects.toBeInstanceOf(RateLimited);
+  });
+
+  it('persists limits per key and treats a cleared limit as unlimited', () => {
+    const store = new Store();
+    const issued = store.issueKey('puffle-prod');
+    expect(store.keyLimits(issued.id)).toEqual({ rpm: undefined, concurrency: undefined });
+    store.setKeyLimits(issued.id, { rpm: 30, concurrency: 2 });
+    expect(store.keyLimits(issued.id)).toEqual({ rpm: 30, concurrency: 2 });
+    expect(store.keys()[0]).toMatchObject({ rpm: 30, concurrency: 2 });
+    store.setKeyLimits(issued.id, {});
+    expect(store.keyLimits(issued.id)).toEqual({ rpm: undefined, concurrency: undefined });
+    expect(() => store.setKeyLimits('key_missing', { rpm: 1 })).toThrow('invalid_request');
   });
 });

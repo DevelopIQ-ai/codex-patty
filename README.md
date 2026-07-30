@@ -92,6 +92,7 @@ Patty listens on loopback only unless you explicitly opt in (`PATTY_ALLOW_NON_LO
 | **Failover** | A sub that answers with a 429/usage-limit error is parked until its own reset and the run is retried on another eligible sub — including across into the fallback tier — before any output has streamed. |
 | **Streaming** | Runs stream over SSE with sequence IDs, heartbeats, replay for late subscribers, and cancellation by the provider's own turn ID. |
 | **Keys** | One named key per consumer (`patty keys create puffle-prod`), revocable independently, with usage attributed per key as well as per sub — so you can see what your prod app spent versus your laptop. |
+| **Limits** | Cap a key with `patty keys limit <id> <req/min> <concurrent>`, or in the console. A burst over the cap **waits in that key's queue** instead of failing, and only what still can't be served gets a `429` with `Retry-After` — so one app's traffic spike can't drain the stack or starve another key. Concurrency counts runs in flight, not sockets. |
 | **Metering** | Tokens in / cached in / out / reasoning out / total, per run and per sub, taken from the provider's `thread/tokenUsage/updated` telemetry rather than estimated. Latest snapshot per run wins, so repeated updates never double-count. |
 | **Thread affinity** | Pin a conversation to the sub that started it so multi-turn context isn't lost to routing. |
 | **Console + CLI** | One static loopback page for humans; `patty accounts|models|usage|status|doctor` and a JSON API for everything else. |
