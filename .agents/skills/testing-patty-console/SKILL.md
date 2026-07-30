@@ -124,6 +124,22 @@ run it; keep live state in its own DB/home root so fake-mode testing cannot clob
   third-party page (Statsig/Datadog/Turnstile "Failed to fetch" errors). Re-read the log in a fresh tab that only
   loaded `http://127.0.0.1:<port>/` before blaming the console.
 
+## Tiered routing (primary vs fallback)
+- `--fake=<alias>[:<quota>[:<minutesUntilReset>[:<tier>]]]` — the 4th field stacks a `fallback` sub, e.g.
+  `--fake=api-credit:1::fallback`. Codex and fake subs default to `primary`; `POST /v1/accounts/openai-compatible`
+  defaults to `fallback` and takes `"tier"`.
+- The discriminating assertion is a fallback sub with the **highest** score staying idle: give it `1` quota against
+  primaries at `0.62`/`0.41`, then check `x-patty-sub` names a primary. A plain score sort would pick the fallback,
+  so this is what proves tiers are not scored against each other.
+- Forcing a primary sub ineligible: write a future `cooldown_until` on the `accounts` row. Editing `quota` in SQLite is
+  unreliable — the fake adapter re-snapshots it, so the Subs table keeps showing the original percentage. Cooldown is
+  the dependable lever; expect Router `Eligible` to read no and the explanation to name the spillover.
+- `GET /v1/router/status` reports `tier`, `state` and `servable` (quota/cooldown eligibility against the sub's own
+  models, independent of any `?model=` filter — the console's Eligible column reads `servable`, not `eligible`).
+  `/metrics` exposes `patty_sub_servable{sub,tier}`, which is the cleanest signal that spillover has started.
+- Cross-tier 429 failover has no runtime fault-injection hook; it is covered by `FakeAdapter.failNext` in
+  `test/integration.test.ts` rather than through the console.
+
 ## Devin Secrets Needed
 - None for fake/`--fake` mode.
 - Live mode needs no Devin secret, but does need operator-supplied material that cannot be self-served: real logged-in
