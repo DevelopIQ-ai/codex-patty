@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Account, PattyEvent, ProviderAdapter } from '@patty/contracts';
-import { Coordinator, FakeAdapter, Router, Store, eligible, now, score } from '../src/core.js';
+import { Coordinator, FakeAdapter, Router, Store, effectiveQuota, eligible, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
 const account = (id: string, remaining = 1): Account => ({ id, alias: id, state: 'ready', models: ['gpt-5-codex'], quota: { remaining, observedAt: now() }, health: 1, activeRuns: 0 });
 const wait = () => new Promise(resolve => setTimeout(resolve, 0));
 class ControlledAdapter implements ProviderAdapter {
@@ -48,3 +48,60 @@ it('aggregates token usage per sub and keeps only the latest snapshot for a run'
 it('reports zeroed usage totals before any run is measured', () => { const report=new Store().usageReport();expect(report).toEqual({totals:{inputTokens:0,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:0,runs:0},accounts:[],runs:[]}); });
 
 it('persists token counts but never output text for usage events', async () => { const store=new Store();const a=account('usage-events');store.addAccount(a);const coordinator=new Coordinator(store,new Router(store),new Map([[a.id,new FakeAdapter()]]));const run=await coordinator.start({model:'gpt-5-codex',input:'measure me'});await wait();const usage=coordinator.events(run).find(event=>event.type==='usage');expect(usage?.data).toMatchObject({inputTokens:expect.any(Number),outputTokens:expect.any(Number)});expect(JSON.stringify(usage?.data)).not.toContain('measure me'); });
+
+describe('quota windows', () => {
+  const at = Date.parse('2026-01-01T12:00:00Z');
+  const windowed = (id: string, remaining: number, resetAt?: string) => ({ ...account(id, remaining), quota: { remaining, resetAt, observedAt: now() } });
+
+  it('treats an exhausted sub as full again once its window has rolled over', () => {
+    const rolledOver = windowed('past', 0, new Date(at - 1_000).toISOString());
+    expect(effectiveQuota(rolledOver, at)).toBe(1);
+    expect(eligible(rolledOver, { model: 'gpt-5-codex', input: 'x' }, undefined, at)).toBe(true);
+    const stillBurned = windowed('future', 0, new Date(at + 3_600_000).toISOString());
+    expect(effectiveQuota(stillBurned, at)).toBe(0);
+    expect(eligible(stillBurned, { model: 'gpt-5-codex', input: 'x' }, undefined, at)).toBe(false);
+  });
+
+  it('reads an unknown quota as half rather than empty or full', () => expect(effectiveQuota({ ...account('unknown'), quota: { observedAt: now() } }, at)).toBe(.5));
+
+  it('scores urgency by how close the window is to resetting', () => {
+    expect(resetUrgency(windowed('none', .5), at)).toBe(0);
+    expect(resetUrgency(windowed('far', .5, new Date(at + 5 * 3_600_000).toISOString()), at)).toBe(0);
+    expect(resetUrgency(windowed('soon', .5, new Date(at + 3_600_000).toISOString()), at)).toBeCloseTo(.8);
+    expect(resetUrgency(windowed('done', .5, new Date(at - 1).toISOString()), at)).toBe(0);
+  });
+
+  it('prefers the equally-loaded sub whose use-it-or-lose-it window resets sooner', () => {
+    const soon = windowed('soon', .5, new Date(at + 30 * 60_000).toISOString());
+    const later = windowed('later', .5, new Date(at + 5 * 3_600_000).toISOString());
+    expect(score(soon, 'seed', at)).toBeGreaterThan(score(later, 'seed', at));
+    // Reset urgency is a tiebreak, not an override: real headroom still wins.
+    expect(score(windowed('roomy', 1, new Date(at + 5 * 3_600_000).toISOString()), 'seed', at)).toBeGreaterThan(score(soon, 'seed', at));
+  });
+
+  it('classifies provider limit errors as quota exhaustion, not generic failure', () => {
+    for (const message of ['HTTP 429 Too Many Requests', 'rate limit reached for gpt-5-codex', 'You have hit your usage limit', 'insufficient_quota'])
+      expect(quotaExhausted(new Error(message))).toBe(true);
+    for (const message of ['socket hang up', 'protocol_incompatible', 'worker_missing', ''])
+      expect(quotaExhausted(new Error(message))).toBe(false);
+  });
+
+  it('parks a limit-reporting sub until its own reset instead of the generic cooldown', () => {
+    const store = new Store();
+    const resetAt = new Date(Date.now() + 3_600_000).toISOString();
+    store.addAccount({ ...account('burned', .2), quota: { remaining: .2, resetAt, observedAt: now() } });
+    expect(store.exhaustQuota('burned')).toBe(resetAt);
+    const stored = store.account('burned')!;
+    expect(stored.quota.remaining).toBe(0);
+    expect(stored.cooldownUntil).toBe(resetAt);
+    expect(eligible(stored, { model: 'gpt-5-codex', input: 'x' })).toBe(false);
+  });
+
+  it('falls back to a bounded park when the provider never told us when the window resets', () => {
+    const store = new Store();
+    store.addAccount(account('burned', .2));
+    const parked = Date.parse(store.exhaustQuota('burned')!);
+    expect(parked - Date.now()).toBeGreaterThan(14 * 60_000);
+    expect(parked - Date.now()).toBeLessThanOrEqual(15 * 60_000);
+  });
+});

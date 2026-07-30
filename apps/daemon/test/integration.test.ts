@@ -5,6 +5,7 @@ import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PattyDaemon, privateDirectory } from '../src/server.js';
+import type { FakeAdapter } from '../src/core.js';
 let server: Server | undefined;
 afterEach(async () => { await new Promise<void>(resolveClose => server?.close(() => resolveClose()) ?? resolveClose()); server = undefined; });
 describe('loopback HTTP API', () => {
@@ -107,5 +108,55 @@ describe('OpenAI-compatible surface', () => {
     expect(report.data.totals.runs).toBe(1);
     expect(report.data.totals.totalTokens).toBeGreaterThan(0);
     expect(report.data.accounts).toMatchObject([{ alias: 'sub-a', runs: 1 }]);
+  });
+});
+
+describe('quota failover', () => {
+  it('retries a 429 on another sub, parks the burned one until its reset, and still answers the caller', async () => {
+    const daemon = new PattyDaemon();
+    const burned = daemon.addFakeAccount('burned', ['gpt-5-codex'], .9);
+    daemon.addFakeAccount('spare', ['gpt-5-codex'], .5);
+    const resetAt = new Date(Date.now() + 3_600_000).toISOString();
+    burned.quota = { remaining: .9, resetAt, observedAt: new Date().toISOString() };
+    daemon.store.updateAccount(burned);
+    (daemon.adapters.get(burned.id) as FakeAdapter).failNext('HTTP 429 rate limit reached');
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'survive the 429' }] }) });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { choices: { message: { content: string } }[] };
+    expect(body.choices[0]?.message.content).toBe('fake: survive the 429');
+    // The burned sub was picked first (higher quota), so the answer proves the retry landed elsewhere.
+    expect(daemon.store.account(burned.id)).toMatchObject({ quota: { remaining: 0, resetAt }, cooldownUntil: resetAt });
+    const usage = await (await fetch(`http://127.0.0.1:${port}/v1/usage`, { headers })).json() as { data: { accounts: { alias: string }[] } };
+    expect(usage.data.accounts.map(entry => entry.alias)).toEqual(['spare']);
+    const attempts = daemon.store.db.prepare('SELECT account_id,attempt,reason FROM run_attempts ORDER BY attempt').all() as { account_id: string; attempt: number; reason: string }[];
+    expect(attempts.map(attempt => attempt.reason)).toEqual(['selected', 'quota_failover']);
+    expect(attempts[0]?.account_id).toBe(burned.id);
+  });
+
+  it('fails the run as quota_exhausted when every sub is out of headroom', async () => {
+    const daemon = new PattyDaemon();
+    const only = daemon.addFakeAccount('only', ['gpt-5-codex'], .4);
+    (daemon.adapters.get(only.id) as FakeAdapter).failNext('usage limit reached', 2);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'nowhere to go' }] }) });
+    expect(response.status).toBe(502);
+    expect(daemon.store.run(response.headers.get('x-patty-run')!)).toMatchObject({ status: 'failed' });
+    expect(daemon.store.account(only.id)?.quota.remaining).toBe(0);
+  });
+
+  it('routes to a sub whose window has already rolled over even though its last snapshot read empty', async () => {
+    const daemon = new PattyDaemon();
+    const stale = daemon.addFakeAccount('stale', ['gpt-5-codex'], 0);
+    stale.quota = { remaining: 0, resetAt: new Date(Date.now() - 60_000).toISOString(), observedAt: new Date(Date.now() - 7_200_000).toISOString() };
+    daemon.store.updateAccount(stale);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'window rolled over' }] }) });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-patty-sub')).toBe('stale');
   });
 });
