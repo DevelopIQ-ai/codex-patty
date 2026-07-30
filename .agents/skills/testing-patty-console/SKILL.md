@@ -59,6 +59,42 @@ PATTY_PORT=3211 node apps/daemon/dist/src/main.js --fake=sub-a --fake=sub-b:0.4
 - Auth sanity checks: `GET /` and `/healthz` are unauthenticated (HTML 200 / `{"ok":true}`); every `/v1/*` route needs
   `authorization: Bearer cp_live_…` and returns 401 otherwise.
 
+## Live Codex mode (real ChatGPT subs)
+Live mode is gated fail-closed by `PattyDaemon.liveCodexCommand()`: it returns a command only when
+`PATTY_ENABLE_LIVE_CODEX=1`, `PATTY_CODEX_VERSION=0.145.0`, `PATTY_CODEX_COMMAND` is set, and the file at
+`PATTY_AUTHORIZATION_EVIDENCE` hashes to `PATTY_AUTHORIZATION_SHA256`. A launcher script exporting those plus
+`PATTY_DB_PATH`/`PATTY_ACCOUNT_HOME_ROOT` (e.g. `run-patty-live.sh` writing to `~/.patty-live/`) is the practical way to
+run it; keep live state in its own DB/home root so fake-mode testing cannot clobber real logins.
+- **Never click `remove` on a live sub.** `removeAccount` calls `adapter.logout()` and `rmSync(home)` — it destroys the
+  real ChatGPT login, and re-adding it needs an interactive browser sign-in. Test removal with fake subs only.
+- Live runs cost the user's real quota. Agree a hard run cap up front, keep prompts tiny (`Reply with exactly: ok`) and
+  pick the cheapest real model in the list (e.g. a `*-mini`).
+- Real usage is provider-reported, not `estimateUsage`: a two-word prompt still bills ~10k–13k input tokens because of
+  the Codex system prompt, plus non-zero `cachedInputTokens`/`reasoningOutputTokens`. So a five-figure `N in` is itself
+  proof you hit a real provider rather than the fake worker. The strong assertion is **arithmetic reconciliation**:
+  snapshot `/v1/usage` before the run, then check card totals == baseline + the exact `N in / M out` from the run-meta
+  line, `runs` +1, and only the routed sub's per-sub row changing.
+- Readiness does **not** require `!requiresOpenaiAuth`. A genuinely signed-in codex 0.145.0 account using ChatGPT
+  tokens (`auth.json` has `tokens.access_token` with `OPENAI_API_KEY: null`) reports `requiresOpenaiAuth: true`, so
+  `waitForAccount` keys off the `account` object alone. If live subs are stuck in `pending_login` with empty model
+  lists, suspect that condition rather than the login itself.
+- Restart restore: `restoreCodexAccounts()` runs before `listen()` and re-attaches an app-server worker to every
+  persisted non-removed sub whose home dir still exists, printing `restoredSubs` in the startup JSON; a sub whose
+  worker fails to start becomes `reconnect_required`. To test it, restart the daemon and assert the startup line lists
+  **all** logged-in aliases and that they return `ready` with real models/quota — then send a run to confirm the
+  restored worker is functional, not merely labelled ready. Restarting is safe (DB, homes and the API key persist), but
+  note `restoredSubs` only lists subs that existed at boot: a sub added *after* startup will be missing from an older
+  log line, which is expected, not a bug.
+- Killing the daemon with `pkill -f "dist/src/main.js"` also matches and kills the shell running the command (exit
+  -1). Run the `pkill` in its own call, verify with `pgrep -af 'dist/src/mai[n].js'`, then start the replacement with
+  `setsid nohup … > /tmp/patty-live.log 2>&1 &` and give it ~15–20s for the workers to hand back model/quota data.
+- When checking the browser console for errors after live login work, remember the ChatGPT sign-in tab is a noisy
+  third-party page (Statsig/Datadog/Turnstile "Failed to fetch" errors). Re-read the log in a fresh tab that only
+  loaded `http://127.0.0.1:<port>/` before blaming the console.
+
 ## Devin Secrets Needed
-- None for fake/`--fake` mode. Live Codex subs (the `Add sub` button) need real provider credentials plus the local
-  authorization gate and cannot be tested headlessly.
+- None for fake/`--fake` mode.
+- Live mode needs no Devin secret, but does need operator-supplied material that cannot be self-served: real logged-in
+  Codex account homes, the authorization-evidence file plus its `PATTY_AUTHORIZATION_SHA256`, and the daemon's
+  one-time `cp_live_…` API key. Ask for those (and for a live run budget) rather than attempting an `Add sub` login,
+  which requires an interactive browser sign-in.
