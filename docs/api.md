@@ -53,6 +53,26 @@ If every eligible sub is busy, cooling down or out of quota, the request is answ
 
 `GET /v1/usage` returns token totals, per-sub aggregates, and the most recent measured runs. Patty persists only provider-reported counts (input, cached input, output, reasoning output, total) keyed by run, sub, and model — never prompts or generated text. Counts come from the provider alone; a provider that reports none (an OpenAI-compatible endpoint that ignores `stream_options.include_usage`, for instance) leaves the run unmetered, and `GET /v1/runs` returns null token fields for it while still naming the model the run asked for. The console shows those as `not reported`, which is deliberately distinct from zero. A run's row is replaced by each newer provider snapshot, so totals stay exact when a turn reports usage more than once.
 
+### Estimated cost
+
+Token counts are measured; dollars are not. `GET /v1/usage` adds a `cost` block and a `cost` field on each sub, key and run, computed locally from a price table (USD per million tokens, with cached input priced separately because every provider discounts it):
+
+```json
+{ "cost": { "subscriptionUsd": 12.4, "apiUsd": 0.31, "estimatedCostUsd": 12.71,
+            "unpricedRuns": 3, "unpricedModels": ["local-llama"] } }
+```
+
+- `subscriptionUsd` is what the turns served by `primary` subs *would* have cost at API list price — the money the subscriptions absorbed. `apiUsd` is real spend, because a `fallback` sub is a metered API key. That split is the point of the number.
+- A model with no price is **unpriced, not free**: it is excluded from the estimate and counted in `unpricedRuns`/`unpricedModels`, and its run reports `estimatedCostUsd: null`. Prices go stale, so under-reporting loudly beats reporting `$0`.
+- `PATTY_PRICES=/path/prices.json` merges over the built-in table, which is how you price a self-hosted model or correct a rate without waiting for a release:
+
+```json
+{ "local-llama": { "input": 0, "output": 0 },
+  "gpt-5.5": { "input": 1.25, "cachedInput": 0.125, "output": 10 } }
+```
+
+The longest matching model prefix wins, so `gpt-5-codex-2026-01-01` inherits `gpt-5-codex`. A malformed price file fails at startup rather than mispricing every later report. `/metrics` exposes `patty_estimated_cost_usd_total{sub,tier}` and `patty_unpriced_runs`.
+
 ## Streaming privacy
 
 Live SSE subscribers receive normalized provider deltas while connected. Patty persists only event ordering/type metadata for `delta` and approval events; it does not persist provider output content. Late SSE replay therefore provides redacted delta markers and terminal semantics, not prior generated text.

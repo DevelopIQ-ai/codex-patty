@@ -98,7 +98,7 @@ components:
 paths:
   /healthz: { get: { responses: {'200': {description: Liveness}} } }
   /: { get: { responses: {'200': {description: Loopback operator console (HTML)}} } }
-  /v1/usage: { get: { security: [{PattyKey: []}], responses: {'200': {description: Token usage totals, per-sub aggregates, and recent measured runs}} } }
+  /v1/usage: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Token usage totals, per-sub and per-key aggregates, and recent measured runs. Each carries a cost block estimated from a local price table (override with PATTY_PRICES): subscriptionUsd is what primary subs absorbed at API list price, apiUsd is real fallback spend, and a model with no price is counted in unpricedRuns rather than as zero.'}} } }
   /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Models in OpenAI list shape; each entry names the subs that serve it'}} } }
   /v1/chat/completions:
     post:

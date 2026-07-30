@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { Account, PattyEvent, ProviderAdapter } from '@patty/contracts';
-import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
+import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, id, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
+import { estimateCost, loadPrices } from '../src/pricing.js';
+import { writeFileSync } from 'node:fs';
 import { PattyDaemon } from '../src/server.js';
 const account = (id: string, remaining = 1, tier: Account['tier'] = 'primary'): Account => ({ id, alias: id, tier, state: 'ready', models: ['gpt-5-codex'], quota: { remaining, observedAt: now() }, health: 1, activeRuns: 0 });
 const wait = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -60,7 +62,7 @@ it('publishes exactly one local started event when a real adapter also emits pro
 
 it('aggregates token usage per sub and keeps only the latest snapshot for a run', async () => { const store=new Store();const first=account('metered-a');const second=account('metered-b');store.addAccount(first);store.addAccount(second);const coordinator=new Coordinator(store,new Router(store),new Map([[first.id,new FakeAdapter()],[second.id,new FakeAdapter()]]));const runs=[await coordinator.start({model:'gpt-5-codex',input:'one two three',accountId:first.id}),await coordinator.start({model:'gpt-5-codex',input:'four',accountId:second.id})];await wait();const report=store.usageReport();expect(report.totals.runs).toBe(2);expect(report.totals.totalTokens).toBe(report.accounts.reduce((sum,item)=>sum+item.totalTokens,0));expect(report.accounts.map(item=>item.alias).sort()).toEqual(['metered-a','metered-b']);expect(report.runs.map(item=>item.runId).sort()).toEqual([...runs].sort());store.recordUsage(runs[0]!,first.id,'gpt-5-codex',{inputTokens:10,cachedInputTokens:1,outputTokens:2,reasoningOutputTokens:3,totalTokens:12});const rerecorded=store.usageReport();expect(rerecorded.totals.runs).toBe(2);expect(rerecorded.runs.find(item=>item.runId===runs[0])?.totalTokens).toBe(12); });
 
-it('reports zeroed usage totals before any run is measured', () => { const report=new Store().usageReport();expect(report).toEqual({totals:{inputTokens:0,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:0,runs:0},accounts:[],keys:[],runs:[]}); });
+it('reports zeroed usage totals before any run is measured', () => { const report=new Store().usageReport();expect(report).toEqual({totals:{inputTokens:0,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:0,runs:0,cost:{estimatedCostUsd:0,unpricedRuns:0}},accounts:[],keys:[],runs:[],cost:{estimatedCostUsd:0,unpricedRuns:0,subscriptionUsd:0,apiUsd:0,unpricedModels:[]}}); });
 
 it('persists token counts but never output text for usage events', async () => { const store=new Store();const a=account('usage-events');store.addAccount(a);const coordinator=new Coordinator(store,new Router(store),new Map([[a.id,new FakeAdapter()]]));const run=await coordinator.start({model:'gpt-5-codex',input:'measure me'});await wait();const usage=coordinator.events(run).find(event=>event.type==='usage');expect(usage?.data).toMatchObject({inputTokens:expect.any(Number),outputTokens:expect.any(Number)});expect(JSON.stringify(usage?.data)).not.toContain('measure me'); });
 
@@ -259,5 +261,50 @@ describe('per-key admission control', () => {
     store.setKeyLimits(issued.id, {});
     expect(store.keyLimits(issued.id)).toEqual({ rpm: undefined, concurrency: undefined });
     expect(() => store.setKeyLimits('key_missing', { rpm: 1 })).toThrow('invalid_request');
+  });
+});
+
+describe('cost estimates', () => {
+  const prices = { 'gpt-5': { input: 1.25, cachedInput: 0.125, output: 10 } };
+
+  it('prices cached input separately and matches the longest model prefix', () => {
+    const cost = estimateCost('gpt-5-2026-01-01', { inputTokens: 1_000_000, cachedInputTokens: 500_000, outputTokens: 100_000 }, prices);
+    // 500k uncached @ $1.25/M + 500k cached @ $0.125/M + 100k out @ $10/M
+    expect(cost).toBeCloseTo(0.625 + 0.0625 + 1, 6);
+  });
+
+  it('leaves an unknown model unpriced rather than free', () => {
+    expect(estimateCost('local-llama', { inputTokens: 1_000, cachedInputTokens: 0, outputTokens: 1_000 }, prices)).toBeUndefined();
+  });
+
+  it('rejects a price file that is missing a rate instead of silently ignoring it', () => {
+    const path = join(tmpdir(), `prices-${randomUUID()}.json`);
+    writeFileSync(path, JSON.stringify({ 'my-model': { input: 1 } }));
+    expect(() => loadPrices(path)).toThrow('numeric input and output');
+    writeFileSync(path, JSON.stringify({ 'my-model': { input: 1, output: 2 } }));
+    expect(loadPrices(path)['my-model']).toEqual({ input: 1, output: 2 });
+    expect(loadPrices(path)['gpt-5']).toBeDefined();
+  });
+
+  it('separates what the subs absorbed from what the API fallback actually spent', () => {
+    const store = new Store();
+    const sub = { id: 'acct_sub', alias: 'codex-work', tier: 'primary' as const, state: 'ready' as const, models: ['gpt-5'], quota: { remaining: 1, observedAt: now() }, health: 1, activeRuns: 0 };
+    const api = { ...sub, id: 'acct_api', alias: 'api-credit', tier: 'fallback' as const };
+    store.addAccount(sub); store.addAccount(api);
+    const usage = { inputTokens: 1_000_000, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 1_000_000 };
+    for (const [account, model] of [[sub, 'gpt-5'], [api, 'gpt-5'], [sub, 'local-llama']] as const) {
+      const run = { id: id('run'), accountId: account.id, model, fingerprint: 'f', status: 'completed' as const, outputStarted: true, cancelRequested: false };
+      store.createRun(run);
+      store.recordUsage(run.id, account.id, model, usage);
+    }
+    const report = store.usageReport();
+    expect(report.cost.subscriptionUsd).toBeCloseTo(1.25, 6);
+    expect(report.cost.apiUsd).toBeCloseTo(1.25, 6);
+    expect(report.cost.estimatedCostUsd).toBeCloseTo(2.5, 6);
+    expect(report.cost.unpricedRuns).toBe(1);
+    expect(report.cost.unpricedModels).toEqual(['local-llama']);
+    const work = report.accounts.find(entry => entry.alias === 'codex-work')!;
+    expect(work).toMatchObject({ tier: 'primary', cost: { estimatedCostUsd: 1.25, unpricedRuns: 1 } });
+    expect(report.runs.find(run => run.model === 'local-llama')!.estimatedCostUsd).toBeNull();
   });
 });
