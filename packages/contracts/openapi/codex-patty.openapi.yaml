@@ -28,6 +28,8 @@ components:
         idempotencyKey: { type: string }
 paths:
   /healthz: { get: { responses: {'200': {description: Liveness}} } }
+  /: { get: { responses: {'200': {description: Loopback operator console (HTML)}} } }
+  /v1/usage: { get: { security: [{PattyKey: []}], responses: {'200': {description: Token usage totals, per-sub aggregates, and recent measured runs}} } }
   /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: Models}} } }
   /v1/router/status: { get: { security: [{PattyKey: []}], responses: {'200': {description: Router status}} } }
   /v1/api-keys: { post: { security: [{PattyKey: []}], responses: {'201': {description: Issued key}} } }
