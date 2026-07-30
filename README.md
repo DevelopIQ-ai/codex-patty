@@ -35,6 +35,26 @@ Then add each subscription from the console's **Add sub** box (or `patty account
 {"listening":{"address":"127.0.0.1","port":3210},"restoredSubs":["work-sub","personal-sub"]}
 ```
 
+## Point any OpenAI client at your stack
+
+Patty speaks OpenAI's chat-completions API, so anything that talks to OpenAI can drive your stacked subs with two environment variables:
+
+```sh
+export OPENAI_BASE_URL=http://127.0.0.1:3210/v1
+export OPENAI_API_KEY=cp_live_...        # the key the daemon printed
+```
+
+```python
+from openai import OpenAI
+client = OpenAI()
+print(client.chat.completions.create(model="gpt-5-codex",
+      messages=[{"role": "user", "content": "hello"}]).choices[0].message.content)
+```
+
+Streaming (`stream=True`) yields standard `chat.completion.chunk` events; `usage` on the final chunk carries the provider's own counts. Every response includes an `x-patty-sub` header naming the sub that served it, and `GET /v1/models` lists each model with the subs that can serve it. Requests here route, meter and fail over exactly like `/v1/runs`.
+
+Not yet supported: tool/function calling, `n>1`, logprobs, and images.
+
 ## What it does
 
 | | |

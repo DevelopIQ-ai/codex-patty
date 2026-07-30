@@ -166,7 +166,8 @@ function renderUsage(report) {
     <td>\${fmt(run.inputTokens)}</td><td>\${fmt(run.outputTokens)}</td><td>\${fmt(run.totalTokens)}</td><td class="muted">\${new Date(run.observedAt).toLocaleTimeString()}</td></tr>\`).join('') : '<tr><td colspan="7" class="muted">no usage recorded yet</td></tr>';
 }
 
-function renderModels(models) {
+function renderModels(entries) {
+  const models = entries.map(entry => entry.id);
   const select = el('model'), previous = select.value;
   select.innerHTML = models.map(model => \`<option value="\${model}">\${model}</option>\`).join('') || '<option value="">no models available</option>';
   if (models.includes(previous)) select.value = previous;

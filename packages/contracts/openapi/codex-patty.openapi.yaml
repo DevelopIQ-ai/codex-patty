@@ -26,11 +26,43 @@ components:
         accountId: { type: string }
         threadId: { type: string }
         idempotencyKey: { type: string }
+    ChatCompletion:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string }
+        stream: { type: boolean, default: false }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [system, developer, user, assistant] }
+              content:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string }
+                        text: { type: string }
 paths:
   /healthz: { get: { responses: {'200': {description: Liveness}} } }
   /: { get: { responses: {'200': {description: Loopback operator console (HTML)}} } }
   /v1/usage: { get: { security: [{PattyKey: []}], responses: {'200': {description: Token usage totals, per-sub aggregates, and recent measured runs}} } }
-  /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: Models}} } }
+  /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Models in OpenAI list shape; each entry names the subs that serve it'}} } }
+  /v1/chat/completions:
+    post:
+      summary: OpenAI-compatible chat completion, routed across stacked subs
+      description: Set OPENAI_BASE_URL to http://127.0.0.1:3210/v1 and any OpenAI client works. The x-patty-sub response header names the sub that served the request.
+      security: [{PattyKey: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ChatCompletion'}}}}
+      responses:
+        '200': {description: 'chat.completion, or a chat.completion.chunk SSE stream when stream is true'}
+        '400': {description: Invalid request}
+        '502': {description: Upstream run failed or was cancelled}
   /v1/router/status: { get: { security: [{PattyKey: []}], responses: {'200': {description: Router status}} } }
   /v1/api-keys: { post: { security: [{PattyKey: []}], responses: {'201': {description: Issued key}} } }
   /v1/api-keys/{id}: { delete: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/KeyId'}], responses: {'204': {description: Revoked}} } }

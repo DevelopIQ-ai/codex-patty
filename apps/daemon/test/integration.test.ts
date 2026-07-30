@@ -55,3 +55,57 @@ const rl=require('node:readline').createInterface({input:process.stdin});rl.on('
   it('re-attaches a persisted sub whose isolated home survives a restart', async () => { const dir = await mkdtemp(join(tmpdir(), 'patty-restore-')); const command = join(dir, 'codex'); await writeFile(command, stub); await chmod(command, 0o700); await withLive(dir, command, async () => { const first = new PattyDaemon(join(dir, 'patty.sqlite')); await first.addCodexAccount('sub-one', 'device_code'); await first.shutdown(); const second = new PattyDaemon(join(dir, 'patty.sqlite')); try { expect(second.adapters.size).toBe(0); expect((await second.restoreCodexAccounts()).map(account => account.alias)).toEqual(['sub-one']); expect(second.store.accounts()[0]).toMatchObject({ alias: 'sub-one', state: 'ready', models: ['gpt-5-codex'] }); expect(second.store.accounts()[0]?.quota.remaining).toBeCloseTo(.75); } finally { await second.shutdown(); } }); });
   it('restores nothing while the live gate is closed', async () => { const saved = new Map(liveKeys.map(key => [key, process.env[key]])); for (const key of liveKeys) delete process.env[key]; const daemon = new PattyDaemon(); try { expect(await daemon.restoreCodexAccounts()).toEqual([]); expect(daemon.adapters.size).toBe(0); } finally { await daemon.shutdown(); for (const [key, value] of saved) value === undefined ? delete process.env[key] : process.env[key] = value; } });
 });
+
+describe('OpenAI-compatible surface', () => {
+  const setup = async () => { const daemon = new PattyDaemon(); daemon.addFakeAccount('sub-a'); server = await daemon.listen(); const { port } = server.address() as { port: number }; return { daemon, url: `http://127.0.0.1:${port}`, headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' } }; };
+
+  it('answers a non-streaming chat completion with provider counts and the serving sub', async () => { const { url, headers } = await setup();
+    const response = await fetch(`${url}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'system', content: 'be terse' }, { role: 'user', content: 'hi there' }] }) });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-patty-sub')).toBe('sub-a');
+    const body = await response.json() as { object: string; choices: { message: { role: string; content: string }; finish_reason: string }[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; prompt_tokens_details: { cached_tokens: number } } };
+    expect(body.object).toBe('chat.completion');
+    expect(body.choices[0]?.finish_reason).toBe('stop');
+    // The fake worker echoes its flattened input, which proves the transcript reached the provider with both roles.
+    expect(body.choices[0]?.message).toEqual({ role: 'assistant', content: 'fake: system: be terse\n\nuser: hi there' });
+    expect(body.usage.total_tokens).toBe(body.usage.prompt_tokens + body.usage.completion_tokens);
+    expect(body.usage.prompt_tokens).toBeGreaterThan(0);
+    expect(body.usage.prompt_tokens_details.cached_tokens).toBe(0);
+  });
+
+  it('streams OpenAI chunks and reports usage on the final chunk', async () => { const { url, headers } = await setup();
+    const response = await fetch(`${url}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: [{ type: 'text', text: 'stream me' }] }], stream: true }) });
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    const payload = await response.text();
+    const chunks = payload.split('\n\n').filter(line => line.startsWith('data: ')).map(line => line.slice(6));
+    expect(chunks.at(-1)).toBe('[DONE]');
+    const parsed = chunks.slice(0, -1).map(chunk => JSON.parse(chunk) as { object: string; choices: { delta: { role?: string; content?: string }; finish_reason: string | null }[]; usage?: { total_tokens: number } });
+    expect(parsed[0]?.choices[0]?.delta.role).toBe('assistant');
+    expect(parsed.map(chunk => chunk.choices[0]?.delta.content ?? '').join('')).toBe('fake: stream me');
+    expect(parsed.at(-1)?.choices[0]?.finish_reason).toBe('stop');
+    expect(parsed.at(-1)?.usage?.total_tokens).toBeGreaterThan(0);
+    expect(parsed.every(chunk => chunk.object === 'chat.completion.chunk')).toBe(true);
+  });
+
+  it('rejects a request without usable message text', async () => { const { url, headers } = await setup();
+    for (const body of [{ model: 'gpt-5-codex' }, { model: 'gpt-5-codex', messages: [] }, { messages: [{ role: 'user', content: 'hi' }] }])
+      expect((await fetch(`${url}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify(body) })).status).toBe(400);
+  });
+
+  it('lists models in OpenAI shape and names the subs serving each one', async () => { const { daemon, url, headers } = await setup();
+    daemon.addFakeAccount('sub-b', ['gpt-5-codex', 'gpt-5.5']);
+    const body = await (await fetch(`${url}/v1/models`, { headers })).json() as { object: string; data: { id: string; object: string; owned_by: string; subs: string[] }[] };
+    expect(body.object).toBe('list');
+    expect(body.data.map(model => model.id)).toEqual(['gpt-5-codex', 'gpt-5.5']);
+    expect(body.data[0]).toMatchObject({ object: 'model', owned_by: 'codex-patty', subs: ['sub-a', 'sub-b'] });
+    expect(body.data[1]?.subs).toEqual(['sub-b']);
+  });
+
+  it('meters chat completions into the same per-sub usage report as /v1/runs', async () => { const { url, headers } = await setup();
+    await fetch(`${url}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'metered' }] }) });
+    const report = await (await fetch(`${url}/v1/usage`, { headers })).json() as { data: { totals: { runs: number; totalTokens: number }; accounts: { alias: string; runs: number }[] } };
+    expect(report.data.totals.runs).toBe(1);
+    expect(report.data.totals.totalTokens).toBeGreaterThan(0);
+    expect(report.data.accounts).toMatchObject([{ alias: 'sub-a', runs: 1 }]);
+  });
+});
