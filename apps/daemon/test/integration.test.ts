@@ -136,6 +136,48 @@ describe('quota failover', () => {
     expect(attempts[0]?.account_id).toBe(burned.id);
   });
 
+  it('keeps a fallback sub idle while a lower-scoring primary sub can still serve', async () => {
+    const daemon = new PattyDaemon();
+    daemon.addFakeAccount('codex-sub', ['gpt-5-codex'], .05);
+    daemon.addFakeAccount('api-credit', ['gpt-5-codex'], 1, 'fallback');
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'stay on the stack' }] }) });
+    expect(response.status).toBe(200);
+    // The fallback sub has far more headroom, so serving from the primary proves tiers are not scored against each other.
+    expect(response.headers.get('x-patty-sub')).toBe('codex-sub');
+    const status = await (await fetch(`http://127.0.0.1:${port}/v1/router/status?model=gpt-5-codex`, { headers })).json() as { data: { alias: string; tier: string; score: number }[] };
+    expect(status.data.map(entry => entry.tier)).toEqual(['primary', 'fallback']);
+    expect(status.data[1]?.score).toBeGreaterThan(status.data[0]!.score);
+  });
+
+  it('spills to the fallback sub once every primary sub is rate limited, and returns to the stack after the window rolls over', async () => {
+    const daemon = new PattyDaemon();
+    const burned = daemon.addFakeAccount('codex-sub', ['gpt-5-codex'], .9);
+    daemon.addFakeAccount('api-credit', ['gpt-5-codex'], .3, 'fallback');
+    (daemon.adapters.get(burned.id) as FakeAdapter).failNext('HTTP 429 usage limit reached');
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    const spilled = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'spill over' }] }) });
+    expect(spilled.status).toBe(200);
+    // Before this, the header named the sub picked first rather than the one that answered after failover.
+    expect(spilled.headers.get('x-patty-sub')).toBe('api-credit');
+    expect(daemon.store.account(burned.id)?.quota.remaining).toBe(0);
+    const attempts = daemon.store.db.prepare('SELECT account_id,reason FROM run_attempts ORDER BY attempt').all() as { account_id: string; reason: string }[];
+    expect(attempts.map(attempt => attempt.reason)).toEqual(['selected', 'quota_failover']);
+    // A rolled-over window makes the subscription usable again, and it must reclaim the traffic from paid credit.
+    const restored = daemon.store.account(burned.id)!;
+    restored.quota = { remaining: 0, resetAt: new Date(Date.now() - 1_000).toISOString(), observedAt: new Date().toISOString() };
+    restored.cooldownUntil = undefined;
+    daemon.store.updateAccount(restored);
+    daemon.store.db.prepare('DELETE FROM cooldowns WHERE account_id=?').run(burned.id);
+    const back = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'back on the stack' }] }) });
+    expect(back.status).toBe(200);
+    expect(back.headers.get('x-patty-sub')).toBe('codex-sub');
+  });
+
   it('fails the run as quota_exhausted when every sub is out of headroom', async () => {
     const daemon = new PattyDaemon();
     const only = daemon.addFakeAccount('only', ['gpt-5-codex'], .4);
@@ -244,7 +286,7 @@ describe('observability', () => {
     expect(response.headers.get('content-type')).toContain('text/plain');
     const body = await response.text();
     expect(body).toContain('# TYPE patty_sub_quota_remaining gauge');
-    expect(body).toMatch(/patty_sub_quota_remaining\{sub="burned"\} 0\b/);
+    expect(body).toMatch(/patty_sub_quota_remaining\{sub="burned",tier="primary"\} 0\b/);
     expect(body).toMatch(/patty_sub_quota_reset_seconds\{sub="burned"\} \d+/);
     expect(body).toMatch(/patty_run_attempts_total\{reason="quota_failover"\} 1/);
     expect(body).toMatch(/patty_runs_total\{status="completed"\} 1/);

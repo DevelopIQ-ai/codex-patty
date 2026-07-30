@@ -1,7 +1,9 @@
 /** Stable provider-neutral data exposed by the Patty API. */
 export type AccountState = 'pending_login' | 'ready' | 'login_failed' | 'reconnect_required' | 'draining' | 'removed';
 export type Quota = { remaining?: number; resetAt?: string; observedAt: string };
-export type Account = { id: string; alias: string; state: AccountState; models: string[]; quota: Quota; health: number; activeRuns: number; cooldownUntil?: string };
+/** Subs are tried a tier at a time: every eligible `primary` sub is exhausted before any `fallback` sub is used, so metered API credit only pays for what the stacked subscriptions could not. */
+export type AccountTier = 'primary' | 'fallback';
+export type Account = { id: string; alias: string; state: AccountState; models: string[]; quota: Quota; health: number; activeRuns: number; cooldownUntil?: string; tier: AccountTier };
 export type RunRequest = { model: string; input: string; capabilities?: string[]; accountId?: string; idempotencyKey?: string; threadId?: string };
 export type PattyEvent = { version: 1; type: 'started' | 'delta' | 'usage' | 'approval_required' | 'completed' | 'failed' | 'cancelled'; runId: string; data?: unknown };
 /** Provider-reported token counts for a single turn. Counts are metadata, never generated content. */
