@@ -461,3 +461,67 @@ it('names the model in run history even when the provider reports no usage', asy
   expect(row?.model).toBe('gpt-5-codex');
   expect(row?.totalTokens).toBeNull();
 });
+
+describe('tool calling', () => {
+  const tools = [{ type: 'function', function: { name: 'get_weather', description: 'current weather', parameters: { type: 'object', properties: { city: { type: 'string' } } } } }];
+  const boot = async () => {
+    const daemon = new PattyDaemon(); daemon.addFakeAccount('codex-work'); server = await daemon.listen();
+    return { port: (server.address() as { port: number }).port, headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, daemon };
+  };
+
+  it('returns tool_calls with a tool_calls finish reason', async () => {
+    const { port, headers } = await boot();
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'weather in Denver?' }], tools }) });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { choices: { finish_reason: string; message: { content: string | null; tool_calls?: { id: string; type: string; function: { name: string; arguments: string } }[] } }[] };
+    const choice = body.choices[0]!;
+    expect(choice.finish_reason).toBe('tool_calls');
+    expect(choice.message.content).toBeNull();
+    expect(choice.message.tool_calls?.[0]).toMatchObject({ type: 'function', function: { name: 'get_weather' } });
+    expect(JSON.parse(choice.message.tool_calls![0]!.function.arguments)).toEqual({});
+  });
+
+  it('streams the calls in a delta before the tool_calls finish reason', async () => {
+    const { port, headers } = await boot();
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'weather?' }], tools, stream: true }) });
+    const stream = await response.text();
+    const chunks = stream.split('\n\n').filter(line => line.startsWith('data: ') && !line.includes('[DONE]')).map(line => JSON.parse(line.slice(6)) as { choices: { delta: { tool_calls?: { index: number; function: { name: string } }[] }; finish_reason: string | null }[] });
+    expect(chunks.find(chunk => chunk.choices[0]!.delta.tool_calls)?.choices[0]!.delta.tool_calls![0]).toMatchObject({ index: 0, function: { name: 'get_weather' } });
+    expect(chunks.at(-1)!.choices[0]!.finish_reason).toBe('tool_calls');
+  });
+
+  it('accepts a tool result turn that carries no prose of its own', async () => {
+    const { port, headers } = await boot();
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', tools, messages: [
+      { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{"city":"Denver"}' } }] },
+      { role: 'tool', tool_call_id: 'call_1', content: '' },
+    ] }) });
+    expect(response.status).toBe(200);
+  });
+
+  it('refuses tools plainly when no stacked sub supports them', async () => {
+    const { port, headers, daemon } = await boot();
+    for (const account of daemon.store.accounts()) daemon.store.setCapabilities(account.id, ['filesystem']);
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'hi' }], tools }) });
+    expect(response.status).toBe(400);
+    const body = await response.json() as { error: { code: string; message: string; retryable: boolean } };
+    expect(body.error).toMatchObject({ code: 'model_unavailable', retryable: false });
+    expect(body.error.message).toContain('tool calls');
+  });
+
+  it('rejects a malformed tool definition', async () => {
+    const { port, headers } = await boot();
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'hi' }], tools: [{ type: 'function', function: {} }] }) });
+    expect(response.status).toBe(400);
+    expect((await response.json() as { error: { code: string } }).error.code).toBe('invalid_request');
+  });
+
+  it('never persists a tool call, only that one happened', async () => {
+    const { port, headers, daemon } = await boot();
+    const body = await (await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'weather in Denver?' }], tools }) })).json() as { id: string };
+    const stored = daemon.store.db.prepare('SELECT type,data FROM run_events WHERE run_id=? AND type=?').all(body.id, 'tool_calls') as { type: string; data: string | null }[];
+    expect(stored).toHaveLength(1);
+    expect(JSON.parse(stored[0]!.data!)).toEqual({ redacted: true });
+    expect(stored[0]!.data).not.toContain('get_weather');
+  });
+});

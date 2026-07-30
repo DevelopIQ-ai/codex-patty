@@ -1,4 +1,4 @@
-import type { PattyEvent, ProviderAdapter, Quota, TokenUsage } from '@patty/contracts';
+import type { ChatToolCall, ChatTurn, PattyEvent, ProviderAdapter, Quota, TokenUsage } from '@patty/contracts';
 
 /**
  * Any OpenAI-compatible endpoint — an OpenAI or OpenRouter key, a Together/Fireworks
@@ -53,22 +53,28 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
   async cancelLogin() {}
 
   async snapshot() {
-    if (this.config.models?.length) { await this.call('/models').catch(() => undefined); return { models: this.config.models, quota: this.quota }; }
+    if (this.config.models?.length) { await this.call('/models').catch(() => undefined); return { models: this.config.models, quota: this.quota, capabilities }; }
     const body = await (await this.call('/models')).json() as { data?: { id?: string }[] };
-    return { models: (body.data ?? []).map(model => model.id).filter((id): id is string => typeof id === 'string'), quota: this.quota };
+    return { models: (body.data ?? []).map(model => model.id).filter((id): id is string => typeof id === 'string'), quota: this.quota, capabilities };
   }
 
   /** Stateless provider: the thread is Patty's, and history is replayed by the caller. */
   async createThread() { return `oai_${++this.turnSeq}`; }
 
-  async run(_threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void) {
+  async run(_threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void, turn?: ChatTurn) {
     const turnId = `oai_turn_${++this.turnSeq}`;
     const controller = new AbortController();
     this.controllers.set(turnId, controller);
+    /** Tool calling needs the real roles, so a turn that carries them replaces the flattened prompt with the caller's own messages. */
     const response = await this.call('/chat/completions', {
       method: 'POST',
       signal: controller.signal,
-      body: JSON.stringify({ model, stream: true, stream_options: { include_usage: true }, messages: [{ role: 'user', content: input }] }),
+      body: JSON.stringify({
+        model, stream: true, stream_options: { include_usage: true },
+        messages: turn?.messages?.length ? turn.messages : [{ role: 'user', content: input }],
+        ...(turn?.tools?.length ? { tools: turn.tools } : {}),
+        ...(turn?.toolChoice !== undefined ? { tool_choice: turn.toolChoice } : {}),
+      }),
     });
     void this.pump(response, turnId, onEvent).finally(() => this.controllers.delete(turnId));
     return { turnId };
@@ -76,6 +82,8 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
 
   private async pump(response: Response, turnId: string, onEvent: (event: PattyEvent) => void) {
     let buffered = '';
+    /** Tool calls arrive as fragments indexed per call, with the name once and the JSON arguments split across chunks, so they are assembled and emitted whole. */
+    const calls = new Map<number, ChatToolCall>();
     try {
       for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
         buffered += Buffer.from(chunk).toString();
@@ -85,9 +93,17 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
           if (!line.startsWith('data:')) continue;
           const payload = line.slice(5).trim();
           if (payload === '[DONE]') continue;
-          const event = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
+          const event = JSON.parse(payload) as { choices?: { delta?: { content?: string; tool_calls?: ToolCallDelta[] } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
           const text = event.choices?.[0]?.delta?.content;
           if (text) onEvent({ version: 1, type: 'delta', runId: turnId, data: { text } });
+          for (const fragment of event.choices?.[0]?.delta?.tool_calls ?? []) {
+            const index = fragment.index ?? 0;
+            const call = calls.get(index) ?? { id: '', type: 'function' as const, function: { name: '', arguments: '' } };
+            if (fragment.id) call.id = fragment.id;
+            if (fragment.function?.name) call.function.name = fragment.function.name;
+            if (fragment.function?.arguments) call.function.arguments += fragment.function.arguments;
+            calls.set(index, call);
+          }
           if (event.usage) onEvent({ version: 1, type: 'usage', runId: turnId, data: {
             inputTokens: event.usage.prompt_tokens ?? 0,
             cachedInputTokens: 0,
@@ -97,6 +113,7 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
           } satisfies TokenUsage });
         }
       }
+      if (calls.size) onEvent({ version: 1, type: 'tool_calls', runId: turnId, data: { toolCalls: [...calls.keys()].sort((a, b) => a - b).map(index => calls.get(index)!) } });
       onEvent({ version: 1, type: 'completed', runId: turnId });
     } catch (error) {
       if (controllerAborted(error)) onEvent({ version: 1, type: 'cancelled', runId: turnId });
@@ -110,6 +127,10 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
   async health() { try { await this.call('/models'); return true; } catch { return false; } }
   async shutdown() { for (const controller of this.controllers.values()) controller.abort(); this.controllers.clear(); }
 }
+
+type ToolCallDelta = { index?: number; id?: string; function?: { name?: string; arguments?: string } };
+/** Every OpenAI-compatible endpoint speaks the tool-calling shape, so these subs advertise it and requests carrying tools route to them. */
+const capabilities = ['tools'];
 
 function controllerAborted(error: unknown) {
   return error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'));

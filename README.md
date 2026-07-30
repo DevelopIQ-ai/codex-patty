@@ -62,7 +62,9 @@ print(client.chat.completions.create(model="gpt-5-codex",
 
 Streaming (`stream=True`) yields standard `chat.completion.chunk` events; `usage` on the final chunk carries the provider's own counts. Every response includes an `x-patty-sub` header naming the sub that served it, and `GET /v1/models` lists each model with the subs that can serve it. Requests here route, meter and fail over exactly like `/v1/runs`.
 
-Not yet supported: tool/function calling, `n>1`, logprobs, and images.
+**Tool calling works** — pass `tools` and `tool_choice` as you would to OpenAI, and a turn that calls one comes back with `finish_reason: "tool_calls"`, `content: null` and the assembled `tool_calls` (streaming emits them in a delta first). Because tool calling is a provider capability rather than something Patty can fake, only subs whose provider honours it are eligible for such a request; if nothing stacked can serve the model with tools, you get a plain `400 model_unavailable` instead of a silently toolless answer. Tool calls are content, so they are never written to the store — only the fact that a call happened.
+
+Not yet supported: `n>1`, logprobs, and images.
 
 ## Install and keep it running
 

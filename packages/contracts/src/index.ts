@@ -7,8 +7,19 @@ export type Account = { id: string; alias: string; state: AccountState; models: 
 /** Per-key admission control. `rpm` caps requests started in a rolling minute, `concurrency` caps runs in flight at once; an unset limit is unlimited. Requests over a limit wait in the key's queue rather than failing immediately. */
 export type KeyLimits = { rpm?: number; concurrency?: number };
 export type KeyPressure = { keyId: string; name: string | null; inFlight: number; queued: number; throttled: number } & KeyLimits;
-export type RunRequest = { model: string; input: string; capabilities?: string[]; accountId?: string; idempotencyKey?: string; threadId?: string };
-export type PattyEvent = { version: 1; type: 'started' | 'delta' | 'usage' | 'approval_required' | 'completed' | 'failed' | 'cancelled'; runId: string; data?: unknown };
+/** An OpenAI-shaped tool a caller offers the model, passed through to a provider that supports them. */
+export type ChatTool = { type: 'function'; function: { name: string; description?: string; parameters?: unknown; strict?: boolean } };
+export type ChatToolChoice = 'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } };
+export type ChatToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
+/**
+ * The verbatim conversation, carried alongside the flattened `input` for providers that
+ * need real message roles: tool calling is a multi-turn protocol, and an assistant turn
+ * holding `tool_calls` with no text cannot survive being flattened into a prompt string.
+ * Requests carrying tools require the `tools` capability, so a sub that cannot honour them is never chosen.
+ */
+export type ChatTurn = { messages: unknown[]; tools?: ChatTool[]; toolChoice?: ChatToolChoice };
+export type RunRequest = { model: string; input: string; capabilities?: string[]; accountId?: string; idempotencyKey?: string; threadId?: string; chat?: ChatTurn };
+export type PattyEvent = { version: 1; type: 'started' | 'delta' | 'tool_calls' | 'usage' | 'approval_required' | 'completed' | 'failed' | 'cancelled'; runId: string; data?: unknown };
 /** Provider-reported token counts for a single turn. Counts are metadata, never generated content. */
 export type TokenUsage = { inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; totalTokens: number };
 export type UsageTotals = TokenUsage & { runs: number };
@@ -26,7 +37,7 @@ export interface ProviderAdapter {
   snapshot(): Promise<{ models: string[]; quota: Quota; capabilities?: string[] }>;
   createThread(model: string): Promise<string>;
   /** Resolves as soon as the provider accepts the turn, with its cancellation ID. */
-  run(threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void): Promise<{ turnId: string }>;
+  run(threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void, turn?: ChatTurn): Promise<{ turnId: string }>;
   interrupt(providerTurnId: string): Promise<void>;
   approve(approvalId: string, approved: boolean): Promise<void>;
   logout(): Promise<void>;

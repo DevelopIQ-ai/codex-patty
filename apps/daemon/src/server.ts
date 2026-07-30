@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import type { Account, AccountTier, ProviderAdapter, RunRequest, TokenUsage } from '@patty/contracts';
+import type { Account, AccountTier, ChatTool, ChatTurn, ProviderAdapter, RunRequest, TokenUsage } from '@patty/contracts';
 import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, id, now, score, tiers } from './core.js';
 import { CodexAppServerAdapter } from './codex.js';
 import { consoleHtml } from './ui.js';
@@ -34,7 +34,7 @@ export class PattyDaemon { store:Store; router:Router; coordinator:Coordinator; 
  /** A key's slot is held for the whole run, not just the HTTP response, so a concurrency cap means runs in flight rather than sockets open. */
  releaseWhenSettled(runId:string,release:()=>void){void this.coordinator.collect(runId).then(release,release);}
  supervise(accountId:string,adapter:ProviderAdapter){if(adapter instanceof CodexAppServerAdapter)adapter.on('exit',()=>this.coordinator.failAccount(accountId));this.adapters.set(accountId,adapter);}
- addFakeAccount(alias:string,models=['gpt-5-codex'],remaining=1,tier:AccountTier='primary'){const existing=this.store.accounts().find(account=>account.alias===alias);if(existing){existing.state='ready';this.store.updateAccount(existing);this.supervise(existing.id,new FakeAdapter(existing.models,existing.quota));return existing;}const account:Account={id:id('acct'),alias,state:'ready',models,quota:{remaining,observedAt:now()},health:1,activeRuns:0,tier};this.store.addAccount(account);this.store.setCapabilities(account.id,['filesystem','shell']);this.supervise(account.id,new FakeAdapter(models,account.quota));return account;}
+ addFakeAccount(alias:string,models=['gpt-5-codex'],remaining=1,tier:AccountTier='primary'){const existing=this.store.accounts().find(account=>account.alias===alias);if(existing){existing.state='ready';this.store.updateAccount(existing);this.supervise(existing.id,new FakeAdapter(existing.models,existing.quota));return existing;}const account:Account={id:id('acct'),alias,state:'ready',models,quota:{remaining,observedAt:now()},health:1,activeRuns:0,tier};this.store.addAccount(account);this.store.setCapabilities(account.id,['filesystem','shell','tools']);this.supervise(account.id,new FakeAdapter(models,account.quota));return account;}
  /** Stacks any OpenAI-compatible endpoint next to the Codex subs. The secret stays in the operator's
   * environment: Patty persists only the variable name, so the store never holds a provider key. */
  async addOpenAiCompatibleAccount(alias:string,baseUrl:string,apiKeyEnv:string,fetchImpl?:typeof fetch,tier:AccountTier='fallback'){
@@ -45,7 +45,7 @@ export class PattyDaemon { store:Store; router:Router; coordinator:Coordinator; 
   const snapshot=await adapter.snapshot();
   const account:Account={id:id('acct'),alias,state:'ready',models:snapshot.models,quota:snapshot.quota,health:1,activeRuns:0,tier};
   this.store.addAccount(account);
-  this.store.setCapabilities(account.id,['chat']);
+  this.store.setCapabilities(account.id,['chat',...(snapshot.capabilities??[])]);
   this.store.setProviderConfig(account.id,'openai_compatible',{baseUrl,apiKeyEnv,tier});
   this.supervise(account.id,adapter);
   return account;
@@ -62,24 +62,32 @@ export class PattyDaemon { store:Store; router:Router; coordinator:Coordinator; 
 
  alias(runId:string){const record=this.store.publicRun(runId);return record?this.store.account(record.accountId)?.alias:undefined;}
  /** OpenAI-compatible chat completions, so any OpenAI client can drive the stack with `OPENAI_BASE_URL`. Routing, metering and failover are the same ones `/v1/runs` uses; `x-patty-sub` names the sub that served the request. */
- async chatCompletions(req:IncomingMessage,res:ServerResponse,requestId:string,apiKeyId:string,release:()=>void){const body=await json(req) as {model?:unknown;messages?:unknown;stream?:unknown};
+ async chatCompletions(req:IncomingMessage,res:ServerResponse,requestId:string,apiKeyId:string,release:()=>void){const body=await json(req) as {model?:unknown;messages?:unknown;stream?:unknown;tools?:unknown;tool_choice?:unknown};
   if(typeof body.model!=='string'||!Array.isArray(body.messages)){release();return write(res,400,{error:{code:'invalid_request',message:'model and messages required',requestId,retryable:false}});}
+  const tools=Array.isArray(body.tools)?body.tools as ChatTool[]:undefined;
+  if(tools?.some(tool=>tool?.type!=='function'||typeof tool.function?.name!=='string')){release();return write(res,400,{error:{code:'invalid_request',message:'each tool needs type "function" and function.name',requestId,retryable:false}});}
   const input=flattenMessages(body.messages as ChatMessage[]);
-  if(!input){release();return write(res,400,{error:{code:'invalid_request',message:'messages must contain text content',requestId,retryable:false}});}
-  const model=body.model,runId=await this.coordinator.start({model,input},apiKeyId),created=Math.floor(Date.now()/1000);
+  /** A tool round trip can carry no prose at all — an assistant turn of pure `tool_calls` answered by a `tool` message — so text is only mandatory when there are no tools. */
+  if(!input&&!tools?.length){release();return write(res,400,{error:{code:'invalid_request',message:'messages must contain text content',requestId,retryable:false}});}
+  const model=body.model;
+  /** Only a sub whose provider honours tools may serve a request offering them, and "nobody here can" is a permanent answer worth stating plainly instead of a routing failure the caller would retry. */
+  if(tools?.length&&!this.store.accounts().some(account=>account.state!=='removed'&&account.models.includes(model)&&this.store.supports(account.id,['tools']))){release();return write(res,400,{error:{code:'model_unavailable',message:`no stacked sub can serve tool calls for ${model}; stack an OpenAI-compatible sub to use tools`,requestId,retryable:false}});}
+  const chat:ChatTurn|undefined=tools?.length?{messages:body.messages,tools,...(body.tool_choice!==undefined?{toolChoice:body.tool_choice as ChatTurn['toolChoice']}:{})}:undefined;
+  const runId=await this.coordinator.start({model,input,...(chat?{chat,capabilities:['tools']}:{})},apiKeyId),created=Math.floor(Date.now()/1000);
   this.releaseWhenSettled(runId,release);
   /** Failover can move a run to another sub before output starts, so the routed sub is only known once the answer is in hand. */
   const headers=()=>({'x-patty-run':runId,...(this.alias(runId)?{'x-patty-sub':this.alias(runId)!}:{})});
   if(body.stream!==true){const result=await this.coordinator.collect(runId);
    if(result.status!=='completed')return write(res,502,{error:{code:'upstream_failed',message:`run ${result.status}`,requestId,retryable:true}},headers());
-   return write(res,200,{id:runId,object:'chat.completion',created,model,choices:[{index:0,message:{role:'assistant',content:result.text},finish_reason:'stop'}],...(openaiUsage(result.usage)?{usage:openaiUsage(result.usage)}:{})},headers());
+   const calls=result.toolCalls;
+   return write(res,200,{id:runId,object:'chat.completion',created,model,choices:[{index:0,message:{role:'assistant',content:calls?.length?null:result.text,...(calls?.length?{tool_calls:calls}:{})},finish_reason:calls?.length?'tool_calls':'stop'}],...(openaiUsage(result.usage)?{usage:openaiUsage(result.usage)}:{})},headers());
   }
   const chunk=(value:unknown)=>res.write(`data: ${JSON.stringify(value)}\n\n`);
   const delta=(value:Record<string,unknown>,finish:string|null=null,usage?:TokenUsage)=>chunk({id:runId,object:'chat.completion.chunk',created,model,choices:[{index:0,delta:value,finish_reason:finish}],...(usage&&openaiUsage(usage)?{usage:openaiUsage(usage)}:{})});
   const begin=()=>{if(res.headersSent)return;res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache',connection:'keep-alive',...headers()});delta({role:'assistant',content:''});};
   const result=await this.coordinator.collect(runId,text=>{begin();delta({content:text});});
   begin();
-  if(result.status==='completed')delta({},'stop',result.usage);
+  if(result.status==='completed'){if(result.toolCalls?.length)delta({tool_calls:result.toolCalls.map((call,index)=>({index,...call}))});delta({},result.toolCalls?.length?'tool_calls':'stop',result.usage);}
   else chunk({error:{code:'upstream_failed',message:`run ${result.status}`,requestId,retryable:true}});
   res.write('data: [DONE]\n\n');res.end();
  }
