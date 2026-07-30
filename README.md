@@ -11,10 +11,10 @@ Patty is a local, loopback-only daemon that holds several signed-in Codex/ChatGP
 ```sh
 corepack pnpm install
 corepack pnpm build
-node apps/daemon/dist/src/main.js --fake=work-sub:0.82 --fake=personal-sub:0.55 --fake=team-sub:0.31
+node apps/daemon/dist/src/main.js --fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14
 ```
 
-Open <http://127.0.0.1:3210/> and paste the one-time `cp_live_…` key the daemon printed. `--fake=<alias>[:<quotaRemaining>]` stacks fake subs, so routing, streaming and per-sub metering are all observable without touching a real account. That's exactly what the screenshot above shows.
+Open <http://127.0.0.1:3210/> and paste the one-time `cp_live_…` key the daemon printed. `--fake=<alias>[:<quotaRemaining>[:<minutesUntilReset>]]` stacks fake subs, so routing, streaming and per-sub metering are all observable without touching a real account. That's exactly what the screenshot above shows.
 
 ## Use it with real subs
 
@@ -60,7 +60,8 @@ Not yet supported: tool/function calling, `n>1`, logprobs, and images.
 | | |
 | --- | --- |
 | **Stacking** | Any number of subs, each isolated in its own `CODEX_HOME`; add and remove them at runtime. |
-| **Routing** | Per-request selection on remaining quota, health, in-flight runs and model eligibility, under a short transactional lease so two requests can't grab the same slot. The console shows every score input, so a routing decision is never a black box. |
+| **Routing** | Per-request selection on remaining quota, health, in-flight runs and model eligibility, under a short transactional lease so two requests can't grab the same slot. Quota is read as the rolling window it is: a sub whose window has already reset counts as full again, and headroom about to expire is preferred as use-it-or-lose-it. The console names the winner and why ("most headroom, 82% vs 55% vs 31%"), so a routing decision is never a black box. |
+| **Failover** | A sub that answers with a 429/usage-limit error is parked until its own reset and the run is retried on another eligible sub, before any output has streamed. |
 | **Streaming** | Runs stream over SSE with sequence IDs, heartbeats, replay for late subscribers, and cancellation by the provider's own turn ID. |
 | **Metering** | Tokens in / cached in / out / reasoning out / total, per run and per sub, taken from the provider's `thread/tokenUsage/updated` telemetry rather than estimated. Latest snapshot per run wins, so repeated updates never double-count. |
 | **Thread affinity** | Pin a conversation to the sub that started it so multi-turn context isn't lost to routing. |

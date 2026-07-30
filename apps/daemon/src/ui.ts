@@ -58,6 +58,11 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 </header>
 <main>
   <section class="wide">
+    <h2>Quota windows</h2>
+    <div class="cards" id="quota-strip"><div class="card"><div class="k">no subs stacked yet</div><div class="v">—</div></div></div>
+  </section>
+
+  <section class="wide">
     <h2>Usage</h2>
     <div class="cards">
       <div class="card"><div class="k">Tokens in</div><div class="v" id="t-in">0</div></div>
@@ -83,7 +88,8 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 
   <section>
     <h2>Router</h2>
-    <table><thead><tr><th>Alias</th><th>Eligible</th><th>Score inputs</th></tr></thead><tbody id="router"><tr><td colspan="3" class="muted">connect to load</td></tr></tbody></table>
+    <table><thead><tr><th>Alias</th><th>Eligible</th><th>Score</th><th>Score inputs</th></tr></thead><tbody id="router"><tr><td colspan="4" class="muted">connect to load</td></tr></tbody></table>
+    <p class="muted" id="routing-why"></p>
     <p class="muted" id="models"></p>
   </section>
 
@@ -141,13 +147,30 @@ function renderAccounts(accounts) {
   for (const button of el('accounts').querySelectorAll('[data-remove]')) button.onclick = async () => { if (confirm('Remove this sub?')) { await api('/v1/accounts/' + button.dataset.remove, { method: 'DELETE' }); await load(); } };
 }
 
-function renderRouter(status, accounts) {
-  const byAlias = new Map(accounts.map(account => [account.alias, account]));
+const pct = value => value === undefined ? '?' : Math.round(value * 100) + '%';
+const countdown = ms => { if (ms === undefined) return 'no reset reported'; if (ms <= 0) return 'window rolled over'; const minutes = Math.round(ms / 60000); return minutes < 60 ? 'resets in ' + minutes + 'm' : 'resets in ' + Math.floor(minutes / 60) + 'h' + String(minutes % 60).padStart(2, '0') + 'm'; };
+
+function renderRouter(status) {
   el('router').innerHTML = status.length ? status.map(entry => {
-    const account = byAlias.get(entry.alias);
-    const inputs = account ? \`quota \${account.quota?.remaining === undefined ? '?' : Math.round(account.quota.remaining * 100) + '%'} · health \${account.health.toFixed(2)} · active \${account.activeRuns}/2\` : '—';
-    return \`<tr><td><code>\${entry.alias}</code></td><td class="\${entry.ready ? 'ok' : 'err'}">\${entry.ready ? 'yes' : 'no'}</td><td class="muted">\${inputs}</td></tr>\`;
-  }).join('') : '<tr><td colspan="3" class="muted">no subs stacked yet</td></tr>';
+    const inputs = \`quota \${pct(entry.effectiveQuota)}\${entry.quotaRemaining !== entry.effectiveQuota ? ' (snapshot ' + pct(entry.quotaRemaining) + ', window rolled over)' : ''} · health \${entry.health.toFixed(2)} · active \${entry.activeRuns}/2 · \${countdown(entry.resetsInMs)}\`;
+    return \`<tr><td><code>\${entry.alias}</code></td><td class="\${entry.ready ? 'ok' : 'err'}">\${entry.ready ? 'yes' : 'no'}</td><td>\${entry.score.toFixed(3)}</td><td class="muted">\${inputs}</td></tr>\`;
+  }).join('') : '<tr><td colspan="4" class="muted">no subs stacked yet</td></tr>';
+  el('routing-why').textContent = explainRouting(status);
+  el('quota-strip').innerHTML = status.length ? status.map(entry => \`<div class="card">
+    <div class="k"><code>\${entry.alias}</code></div>
+    <div class="v">\${pct(entry.effectiveQuota)}</div>
+    <div class="k">\${countdown(entry.resetsInMs)}\${entry.cooldownUntil && Date.parse(entry.cooldownUntil) > Date.now() ? ' · cooling down' : ''}</div></div>\`).join('') : '<div class="card"><div class="k">no subs stacked yet</div><div class="v">—</div></div>';
+}
+
+/** The router already computes why it prefers a sub; saying it in words is what makes the choice reviewable. */
+function explainRouting(status) {
+  const ready = status.filter(entry => entry.ready);
+  if (!ready.length) return status.length ? 'no sub is ready to serve a request' : '';
+  const [best, ...rest] = ready;
+  const headroom = pct(best.effectiveQuota) + (rest.length ? ' vs ' + rest.map(entry => pct(entry.effectiveQuota)).join(' vs ') : '');
+  const soonest = ready.filter(entry => entry.resetsInMs !== undefined).sort((a, b) => a.resetsInMs - b.resetsInMs)[0];
+  const urgency = soonest && soonest.alias === best.alias && rest.length ? ', and its window ' + countdown(best.resetsInMs) + ' so that headroom is use-it-or-lose-it' : '';
+  return 'next request routes to ' + best.alias + ' — most headroom (' + headroom + ')' + urgency;
 }
 
 function renderUsage(report) {
@@ -178,7 +201,7 @@ async function load() {
   if (!key) { setAuth('no key', 'err'); return; }
   try {
     const [accounts, router, models, usage] = await Promise.all([api('/v1/accounts'), api('/v1/router/status'), api('/v1/models'), api('/v1/usage')]);
-    renderAccounts(accounts.data); renderRouter(router.data, accounts.data); renderModels(models.data); renderUsage(usage.data);
+    renderAccounts(accounts.data); renderRouter(router.data); renderModels(models.data); renderUsage(usage.data);
     setAuth('connected', 'ok');
   } catch (error) { setAuth(String(error.message), 'err'); }
 }

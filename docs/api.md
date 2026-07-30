@@ -12,6 +12,18 @@
 
 `GET /v1/models` returns OpenAI's list shape (`{object:'list',data:[{id,object:'model',owned_by}]}`) with a Patty-specific `subs` array naming which stacked subs can serve each model.
 
+## Routing and quota windows
+
+`GET /v1/router/status[?model=<model>]` returns the live ranking with the inputs behind it: `quotaRemaining` (last provider snapshot), `effectiveQuota`, `resetAt`/`resetsInMs`, `health`, `activeRuns`, `cooldownUntil` and the computed `score`, sorted best-first. Passing `model` evaluates real eligibility for that model instead of just readiness.
+
+Quota is a rolling window, so Patty reads it as one:
+
+- once `resetAt` has passed, a stored `remaining` describes a window that no longer exists, so the sub counts as full again and becomes eligible without waiting for a refresh;
+- an unknown `remaining` counts as half — neither trusted nor excluded;
+- headroom in a window that is about to roll over is use-it-or-lose-it, so a small `resetUrgency` term (weight .05) breaks ties toward the sooner-resetting sub without overriding real headroom (weight .55).
+
+When a provider rejects a turn with a rate-limit/usage-limit/429 error before any output, Patty marks that sub's quota exhausted, parks it until its own `resetAt` (or 15 minutes if the provider never reported one), and retries the run once on another eligible sub. The attempt is recorded with reason `quota_failover`, so `run_attempts` shows where a request actually ran. If nothing else is eligible the run fails as `quota_exhausted`. Once output has started, Patty does not fail over — replaying a partially streamed answer on another sub would corrupt it.
+
 ## Usage metering
 
 `GET /v1/usage` returns token totals, per-sub aggregates, and the most recent measured runs. Patty persists only provider-reported counts (input, cached input, output, reasoning output, total) keyed by run, sub, and model — never prompts or generated text. A run's row is replaced by each newer provider snapshot, so totals stay exact when a turn reports usage more than once.

@@ -160,3 +160,32 @@ describe('quota failover', () => {
     expect(response.headers.get('x-patty-sub')).toBe('stale');
   });
 });
+
+describe('router status', () => {
+  it('explains the ranking with quota windows rather than a redacted score', async () => {
+    const daemon = new PattyDaemon();
+    const roomy = daemon.addFakeAccount('roomy', ['gpt-5-codex'], .8);
+    const tight = daemon.addFakeAccount('tight', ['gpt-5-codex'], .2);
+    tight.quota = { remaining: .2, resetAt: new Date(Date.now() + 1_800_000).toISOString(), observedAt: new Date().toISOString() };
+    daemon.store.updateAccount(tight);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const body = await (await fetch(`http://127.0.0.1:${port}/v1/router/status?model=gpt-5-codex`, { headers: { authorization: `Bearer ${daemon.key}` } })).json() as { data: { alias: string; eligible: boolean; effectiveQuota: number; resetsInMs?: number; score: number }[] };
+    expect(body.data.map(entry => entry.alias)).toEqual(['roomy', 'tight']);
+    expect(body.data.every(entry => entry.eligible)).toBe(true);
+    expect(body.data[0]?.score).toBeGreaterThan(body.data[1]!.score);
+    expect(body.data[0]?.effectiveQuota).toBeCloseTo(.8);
+    expect(body.data[0]?.resetsInMs).toBeUndefined();
+    expect(body.data[1]?.resetsInMs).toBeGreaterThan(1_700_000);
+    expect(daemon.store.account(roomy.id)?.alias).toBe('roomy');
+  });
+
+  it('marks a model nobody serves as ineligible without hiding the sub', async () => {
+    const daemon = new PattyDaemon();
+    daemon.addFakeAccount('only-codex', ['gpt-5-codex']);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const body = await (await fetch(`http://127.0.0.1:${port}/v1/router/status?model=gpt-4o`, { headers: { authorization: `Bearer ${daemon.key}` } })).json() as { data: { alias: string; ready: boolean; eligible: boolean }[] };
+    expect(body.data).toMatchObject([{ alias: 'only-codex', ready: true, eligible: false }]);
+  });
+});
