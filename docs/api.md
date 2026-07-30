@@ -52,4 +52,8 @@ The daemon writes one JSON line per request to stdout: timestamp, request id, me
 
 `POST /v1/accounts/openai-compatible {"alias":"together","baseUrl":"https://api.together.xyz/v1","apiKeyEnv":"TOGETHER_API_KEY"}` stacks any OpenAI-compatible endpoint — an OpenAI or OpenRouter key, Together/Fireworks, a local Ollama or vLLM — next to your Codex subs behind the same router, metering, failover and OpenAI-compatible surface.
 
+These subs default to `tier: "fallback"`, so they only serve a request once every `primary` sub is exhausted, cooling down or out of quota — paid credit is the spillover for your stack rather than a competitor for it. Pass `"tier":"primary"` to have a provider compete with your subs on score instead. `GET /v1/router/status` reports each sub's `tier` and sorts primaries first, and `patty_sub_servable{sub,tier}` in `/metrics` shows exactly when spillover starts.
+
+Tiers are never mixed within one routing decision, and failover respects them: a 429 on the last primary sub retries on a fallback sub, and once the primary window rolls over the traffic returns to it without any operator action.
+
 Patty stores the **name of the environment variable**, never the key: the secret is read from the daemon's environment at call time, so a stolen `patty.sqlite` still contains no provider credential. If the variable is unset when a request routes there, the run fails as `upstream_failed` rather than falling back to an unauthenticated call. Models come from the provider's own `/models`, and remaining quota is derived from the standard `x-ratelimit-*` headers — a provider that reports nothing stays "unknown" (counted as half) rather than being assumed full.

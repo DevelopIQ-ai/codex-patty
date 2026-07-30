@@ -78,7 +78,7 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 
   <section>
     <h2>Subs</h2>
-    <table><thead><tr><th>Alias</th><th>State</th><th>Quota left</th><th>Health</th><th>Active</th><th>Models</th><th></th></tr></thead><tbody id="accounts"><tr><td colspan="7" class="muted">connect to load</td></tr></tbody></table>
+    <table><thead><tr><th>Alias</th><th>Tier</th><th>State</th><th>Quota left</th><th>Health</th><th>Active</th><th>Models</th><th></th></tr></thead><tbody id="accounts"><tr><td colspan="8" class="muted">connect to load</td></tr></tbody></table>
     <div class="row" style="margin-top:12px">
       <input id="alias" class="grow" placeholder="new sub alias" />
       <select id="mode"><option value="browser">codex · browser</option><option value="device_code">codex · device code</option><option value="openai_compatible">openai-compatible</option></select>
@@ -88,13 +88,14 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
     <div class="row hidden" id="byok" style="margin-top:8px">
       <input id="base-url" class="grow" placeholder="https://api.together.xyz/v1" />
       <input id="key-env" class="grow" placeholder="TOGETHER_API_KEY (env var name, not the key)" />
+    <select id="byok-tier"><option value="fallback">fallback · only when subs are exhausted</option><option value="primary">primary · compete with subs</option></select>
     </div>
     <p id="login" class="muted"></p>
   </section>
 
   <section>
     <h2>Router</h2>
-    <table><thead><tr><th>Alias</th><th>Eligible</th><th>Score</th><th>Score inputs</th></tr></thead><tbody id="router"><tr><td colspan="4" class="muted">connect to load</td></tr></tbody></table>
+    <table><thead><tr><th>Alias</th><th>Tier</th><th>Eligible</th><th>Score</th><th>Score inputs</th></tr></thead><tbody id="router"><tr><td colspan="5" class="muted">connect to load</td></tr></tbody></table>
     <p class="muted" id="routing-why"></p>
     <p class="muted" id="models"></p>
   </section>
@@ -173,12 +174,13 @@ async function health() { try { const body = await (await fetch('/healthz')).jso
 function renderAccounts(accounts) {
   el('accounts').innerHTML = accounts.length ? accounts.map(account => \`<tr>
     <td><code>\${account.alias}</code></td>
+    <td><span class="pill">\${account.tier}</span></td>
     <td><span class="pill \${account.state}">\${account.state}</span></td>
     <td>\${account.quota?.remaining === undefined ? '<span class="muted">unknown</span>' : Math.round(account.quota.remaining * 100) + '%'}</td>
     <td>\${account.health.toFixed(2)}</td>
     <td>\${account.activeRuns}</td>
     <td class="muted">\${account.models.join(', ') || '—'}</td>
-    <td><button class="danger" data-remove="\${account.id}">remove</button></td></tr>\`).join('') : '<tr><td colspan="7" class="muted">no subs stacked yet</td></tr>';
+    <td><button class="danger" data-remove="\${account.id}">remove</button></td></tr>\`).join('') : '<tr><td colspan="8" class="muted">no subs stacked yet</td></tr>';
   for (const button of el('accounts').querySelectorAll('[data-remove]')) button.onclick = async () => { if (confirm('Remove this sub?')) { await api('/v1/accounts/' + button.dataset.remove, { method: 'DELETE' }); await load(); } };
 }
 
@@ -188,8 +190,8 @@ const countdown = ms => { if (ms === undefined) return 'no reset reported'; if (
 function renderRouter(status) {
   el('router').innerHTML = status.length ? status.map(entry => {
     const inputs = \`quota \${pct(entry.effectiveQuota)}\${entry.quotaRemaining !== entry.effectiveQuota ? ' (snapshot ' + pct(entry.quotaRemaining) + ', window rolled over)' : ''} · health \${entry.health.toFixed(2)} · active \${entry.activeRuns}/2 · \${countdown(entry.resetsInMs)}\`;
-    return \`<tr><td><code>\${entry.alias}</code></td><td class="\${entry.ready ? 'ok' : 'err'}">\${entry.ready ? 'yes' : 'no'}</td><td>\${entry.score.toFixed(3)}</td><td class="muted">\${inputs}</td></tr>\`;
-  }).join('') : '<tr><td colspan="4" class="muted">no subs stacked yet</td></tr>';
+    return \`<tr><td><code>\${entry.alias}</code></td><td><span class="pill">\${entry.tier}</span></td><td class="\${entry.servable ? 'ok' : 'err'}">\${entry.servable ? 'yes' : 'no'}</td><td>\${entry.score.toFixed(3)}</td><td class="muted">\${inputs}</td></tr>\`;
+  }).join('') : '<tr><td colspan="5" class="muted">no subs stacked yet</td></tr>';
   el('routing-why').textContent = explainRouting(status);
   el('quota-strip').innerHTML = status.length ? status.map(entry => \`<div class="card">
     <div class="k"><code>\${entry.alias}</code></div>
@@ -199,13 +201,20 @@ function renderRouter(status) {
 
 /** The router already computes why it prefers a sub; saying it in words is what makes the choice reviewable. */
 function explainRouting(status) {
-  const ready = status.filter(entry => entry.ready);
-  if (!ready.length) return status.length ? 'no sub is ready to serve a request' : '';
+  const servable = status.filter(entry => entry.servable);
+  if (!servable.length) return status.length ? 'no sub is ready to serve a request' : '';
+  const primaries = servable.filter(entry => entry.tier === 'primary');
+  const ready = primaries.length ? primaries : servable;
   const [best, ...rest] = ready;
+  if (!primaries.length) {
+    const parked = status.filter(entry => entry.tier === 'primary');
+    const spill = 'no primary sub can serve a request right now' + (parked.length ? ' (' + parked.length + ' stacked: ' + parked.map(entry => entry.alias + ' ' + (entry.ready ? countdown(entry.resetsInMs) : entry.state ?? 'not ready')).join(', ') + ')' : '') + ', so this request spills to fallback ' + best.alias;
+    return spill;
+  }
   const headroom = pct(best.effectiveQuota) + (rest.length ? ' vs ' + rest.map(entry => pct(entry.effectiveQuota)).join(' vs ') : '');
   const soonest = ready.filter(entry => entry.resetsInMs !== undefined).sort((a, b) => a.resetsInMs - b.resetsInMs)[0];
   const urgency = soonest && soonest.alias === best.alias && rest.length ? ', and its window ' + countdown(best.resetsInMs) + ' so that headroom is use-it-or-lose-it' : '';
-  return 'next request routes to ' + best.alias + ' — most headroom (' + headroom + ')' + urgency;
+  return 'next request routes to ' + best.alias + ' — most headroom among your primary subs (' + headroom + ')' + urgency + (servable.length > ready.length ? '; ' + (servable.length - ready.length) + ' fallback sub(s) stay idle until every primary is exhausted' : '');
 }
 
 function renderUsage(report) {
@@ -311,8 +320,8 @@ el('add').onclick = async () => {
   if (el('mode').value === 'openai_compatible') {
     el('login').className = 'muted'; el('login').textContent = 'contacting provider…';
     try {
-      const account = await api('/v1/accounts/openai-compatible', { method: 'POST', body: JSON.stringify({ alias, baseUrl: el('base-url').value.trim(), apiKeyEnv: el('key-env').value.trim() }) });
-      el('login').textContent = 'stacked ' + alias + ' with ' + account.models.length + ' model(s); its key is read from ' + el('key-env').value.trim() + ' and never stored';
+      const account = await api('/v1/accounts/openai-compatible', { method: 'POST', body: JSON.stringify({ alias, baseUrl: el('base-url').value.trim(), apiKeyEnv: el('key-env').value.trim(), tier: el('byok-tier').value }) });
+      el('login').textContent = 'stacked ' + alias + ' with ' + account.models.length + ' model(s); its key is read from ' + el('key-env').value.trim() + ' and never stored; tier ' + el('byok-tier').value;
       el('alias').value = '';
     } catch (error) { el('login').className = 'err'; el('login').textContent = 'could not stack: ' + error.message; }
     await load(); return;
