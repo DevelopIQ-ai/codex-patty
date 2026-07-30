@@ -1,0 +1,11 @@
+# Review is required on everything, and these paths hold the invariants the project
+# promises its users, so they are never merged without an owner looking at them.
+*                                       @kbhuw
+
+/.github/workflows/                     @kbhuw
+/apps/daemon/src/codex.ts               @kbhuw
+/apps/daemon/src/server.ts              @kbhuw
+/docs/provider-authorization.md         @kbhuw
+/docs/security.md                       @kbhuw
+/SECURITY.md                            @kbhuw
+/LICENSE                                @kbhuw
