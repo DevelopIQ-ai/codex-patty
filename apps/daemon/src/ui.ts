@@ -195,6 +195,10 @@ el('add').onclick = async () => {
   await load();
 };
 
+/** The stream runs concurrently with the routing lookup, so meta text is composed instead of appended. */
+let metaBase = '', metaSuffix = '';
+function meta(base, suffix) { if (base !== undefined) metaBase = base; if (suffix) metaSuffix += suffix; el('run-meta').textContent = metaBase + metaSuffix; }
+
 function closeStream() { stream?.abort(); stream = null; el('cancel').disabled = true; el('send').disabled = false; }
 
 async function subscribe(id) {
@@ -209,8 +213,8 @@ async function subscribe(id) {
       const line = frame.split('\\n').find(part => part.startsWith('data: ')); if (!line) continue;
       const event = JSON.parse(line.slice(6));
       if (event.type === 'delta' && event.data?.text) { el('output').classList.remove('muted'); el('output').textContent += event.data.text; }
-      if (event.type === 'usage') el('run-meta').textContent += ' · ' + event.data.inputTokens + ' in / ' + event.data.outputTokens + ' out tokens';
-      if (['completed', 'failed', 'cancelled'].includes(event.type)) { el('run-meta').textContent += ' · ' + event.type; closeStream(); await load(); return; }
+      if (event.type === 'usage') meta(undefined, ' · ' + event.data.inputTokens + ' in / ' + event.data.outputTokens + ' out tokens');
+      if (['completed', 'failed', 'cancelled'].includes(event.type)) { meta(undefined, ' · ' + event.type); closeStream(); await load(); return; }
     }
   }
   closeStream(); await load();
@@ -219,7 +223,7 @@ async function subscribe(id) {
 el('send').onclick = async () => {
   const model = el('model').value, input = el('prompt').value.trim();
   if (!model || !input) return;
-  el('send').disabled = true; el('output').textContent = ''; el('output').classList.add('muted'); el('run-meta').textContent = 'routing…';
+  el('send').disabled = true; el('output').textContent = ''; el('output').classList.add('muted'); metaSuffix = ''; meta('routing…');
   try {
     if (el('pin-thread').checked && !threadId) threadId = (await api('/v1/threads', { method: 'POST', body: JSON.stringify({ model }) })).threadId;
     if (!el('pin-thread').checked) threadId = null;
@@ -227,12 +231,12 @@ el('send').onclick = async () => {
       ? await api('/v1/threads/' + threadId + '/turns', { method: 'POST', body: JSON.stringify({ model, input }) })
       : await api('/v1/runs', { method: 'POST', body: JSON.stringify({ model, input }) });
     runId = accepted.id;
-    const run = await api('/v1/runs/' + runId);
-    const accounts = await api('/v1/accounts');
-    const alias = accounts.data.find(account => account.id === run.accountId)?.alias ?? run.accountId;
-    el('run-meta').textContent = 'run ' + runId + ' routed to ' + alias;
     el('cancel').disabled = false;
-    await subscribe(runId);
+    const streamed = subscribe(runId);
+    const [run, accounts] = await Promise.all([api('/v1/runs/' + runId), api('/v1/accounts')]);
+    const alias = accounts.data.find(account => account.id === run.accountId)?.alias ?? run.accountId;
+    meta('run ' + runId + ' routed to ' + alias);
+    await streamed;
   } catch (error) { el('run-meta').innerHTML = '<span class="err">' + error.message + '</span>'; el('send').disabled = false; }
 };
 
