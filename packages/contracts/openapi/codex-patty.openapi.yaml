@@ -31,6 +31,13 @@ components:
         accountId: { type: string }
         threadId: { type: string }
         idempotencyKey: { type: string }
+        chat:
+          type: object
+          description: 'Structured turn. Offering tools here routes the run to a sub whose provider honours them, or fails with model_unavailable if none can; the resulting calls arrive on the event stream as a tool_calls event and are never persisted.'
+          properties:
+            messages: { type: array, items: { type: object } }
+            tools: { type: array, items: { type: object, required: [type, function], properties: { type: { type: string, enum: [function] }, function: { type: object, required: [name], properties: { name: { type: string }, description: { type: string }, parameters: { type: object } } } } } }
+            toolChoice: {}
     ToolCall:
       type: object
       required: [id, type, function]

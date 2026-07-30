@@ -115,6 +115,17 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
       <button id="cancel" disabled>Cancel</button>
     </div>
     <textarea id="prompt" placeholder="Ask the stacked subs something…">Say hello from Codex Patty.</textarea>
+    <label class="muted"><input type="checkbox" id="use-tools" /> offer tools (OpenAI <code>tools</code> array)</label>
+    <textarea id="tools" class="hidden" spellcheck="false" placeholder='[{"type":"function","function":{"name":"get_weather"}}]'>[
+  {
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "description": "Look up the weather for a city",
+      "parameters": { "type": "object", "properties": { "city": { "type": "string" } } }
+    }
+  }
+]</textarea>
     <p class="muted" id="run-meta"></p>
     <pre id="output" class="muted">output appears here</pre>
   </section>
@@ -173,7 +184,8 @@ const api = async (path, init = {}) => {
   const response = await fetch(path, { ...init, headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json', ...(init.headers ?? {}) } });
   if (response.status === 204) return null;
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error?.code ?? 'request failed: ' + response.status);
+  /** The code alone says what went wrong but never how to fix it, and these messages name the fix. */
+  if (!response.ok) throw new Error(body?.error?.message ?? body?.error?.code ?? 'request failed: ' + response.status);
   return body;
 };
 
@@ -384,6 +396,10 @@ async function subscribe(id) {
       const line = frame.split('\\n').find(part => part.startsWith('data: ')); if (!line) continue;
       const event = JSON.parse(line.slice(6));
       if (event.type === 'delta' && event.data?.text) { el('output').classList.remove('muted'); el('output').textContent += event.data.text; }
+      if (event.type === 'tool_calls' && Array.isArray(event.data?.toolCalls)) {
+        el('output').classList.remove('muted');
+        el('output').textContent += event.data.toolCalls.map(call => 'tool call · ' + call.function.name + '(' + call.function.arguments + ')').join('\\n') + '\\n';
+      }
       if (event.type === 'usage') meta(undefined, ' · ' + event.data.inputTokens + ' in / ' + event.data.outputTokens + ' out tokens');
       if (['completed', 'failed', 'cancelled'].includes(event.type)) { meta(undefined, ' · ' + event.type); closeStream(); await load(); return; }
     }
@@ -391,16 +407,24 @@ async function subscribe(id) {
   closeStream(); await load();
 }
 
+el('use-tools').onchange = () => el('tools').classList.toggle('hidden', !el('use-tools').checked);
+
 el('send').onclick = async () => {
   const model = el('model').value, input = el('prompt').value.trim();
-  if (!model || !input) return;
+  let tools;
+  if (el('use-tools').checked) {
+    try { tools = JSON.parse(el('tools').value); } catch (error) { el('run-meta').innerHTML = '<span class="err">tools must be valid JSON: ' + error.message + '</span>'; return; }
+    if (!Array.isArray(tools) || !tools.length) { el('run-meta').innerHTML = '<span class="err">tools must be a non-empty array</span>'; return; }
+  }
+  /** A tool round trip can be answered with no prose at all, so a prompt is only required when no tools are offered. */
+  if (!model || (!input && !tools)) return;
   el('send').disabled = true; el('output').textContent = ''; el('output').classList.add('muted'); metaSuffix = ''; meta('routing…');
   try {
     if (el('pin-thread').checked && !threadId) threadId = (await api('/v1/threads', { method: 'POST', body: JSON.stringify({ model }) })).threadId;
     if (!el('pin-thread').checked) threadId = null;
     const accepted = threadId
       ? await api('/v1/threads/' + threadId + '/turns', { method: 'POST', body: JSON.stringify({ model, input }) })
-      : await api('/v1/runs', { method: 'POST', body: JSON.stringify({ model, input }) });
+      : await api('/v1/runs', { method: 'POST', body: JSON.stringify({ model, input, ...(tools ? { chat: { messages: [{ role: 'user', content: input }], tools } } : {}) }) });
     runId = accepted.id;
     el('cancel').disabled = false;
     const streamed = subscribe(runId);
