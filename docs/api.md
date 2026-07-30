@@ -8,7 +8,16 @@
 - `usage` is the provider's own counts mapped to OpenAI's names — `prompt_tokens`/`completion_tokens`/`total_tokens`, with `prompt_tokens_details.cached_tokens` and `completion_tokens_details.reasoning_tokens`. Reasoning output is counted inside `completion_tokens`, as OpenAI reports it;
 - `x-patty-sub` and `x-patty-run` name the sub that served the request and the underlying run, so a caller can attribute or debug a response without a second call;
 - a failed or cancelled run answers `502` (non-streaming) or an `error` frame before `[DONE]` (streaming);
-- unsupported today: tool/function calling, `n>1`, logprobs, images.
+- unsupported today: `n>1`, logprobs, images.
+
+### Tool calling
+
+`tools` and `tool_choice` are passed through to the provider, and a turn that calls one answers with `finish_reason: "tool_calls"`, `content: null` and an assembled `tool_calls` array; streaming emits the calls as one `delta.tool_calls` chunk before the finishing chunk, since Patty assembles the provider's fragments rather than forwarding them piecemeal.
+
+Two consequences worth knowing:
+
+- **A request carrying tools requires the `tools` capability**, so it can only be routed to a sub whose provider honours them — today the OpenAI-compatible subs. A Codex app-server sub runs its own agent loop and cannot expose the caller's functions, so it is never chosen for such a request. When no stacked sub can serve the model *with* tools the answer is `400 model_unavailable` naming that, rather than a silently toolless completion or a routing failure the caller would retry.
+- **The verbatim messages are forwarded** instead of the flattened prompt, because a tool round trip includes an assistant turn whose content is `null` and a `tool` message answering a specific `tool_call_id` — neither survives flattening. Tool calls are provider content, so they are never persisted: `run_events` records that a `tool_calls` event happened and nothing about it, and a caller reading a run back after its in-process buffer has expired sees text and token counts only.
 
 `GET /v1/models` returns OpenAI's list shape (`{object:'list',data:[{id,object:'model',owned_by}]}`) with a Patty-specific `subs` array naming which stacked subs can serve each model.
 
