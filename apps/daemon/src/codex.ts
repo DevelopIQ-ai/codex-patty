@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import type { PattyEvent, ProviderAdapter, Quota } from '@patty/contracts';
+import type { PattyEvent, ProviderAdapter, Quota, TokenUsage } from '@patty/contracts';
 
 type Rpc = { id?: unknown; method?: unknown; params?: unknown; result?: unknown; error?: { message?: unknown } };
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
@@ -11,6 +11,13 @@ type TurnRef = { threadId: string; emit: (event: PattyEvent) => void };
 type Approval = { method: string; requestId: string | number; turnId?: string };
 type QueuedTurnMessage = PattyEvent | { approval: Approval };
 type RateWindow = { usedPercent?: number; resetsAt?: number | null };
+type UsageBreakdown = { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number; reasoningOutputTokens?: number; totalTokens?: number };
+const tokenUsage = (breakdown: UsageBreakdown | undefined): TokenUsage | undefined => {
+  if (!breakdown) return undefined;
+  const read = (value: number | undefined) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0);
+  const inputTokens = read(breakdown.inputTokens), outputTokens = read(breakdown.outputTokens);
+  return { inputTokens, cachedInputTokens: read(breakdown.cachedInputTokens), outputTokens, reasoningOutputTokens: read(breakdown.reasoningOutputTokens), totalTokens: read(breakdown.totalTokens) || inputTokens + outputTokens };
+};
 const approvalMethods = new Set(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'applyPatchApproval', 'execCommandApproval']);
 
 /** Official Codex CLI 0.145.0 app-server JSONL adapter. */
@@ -40,9 +47,10 @@ export class CodexAppServerAdapter extends EventEmitter implements ProviderAdapt
     if (typeof message.method === 'string') this.notification(message.method, message.params);
   }
   private notification(method: string, params: unknown) {
-    const value = params as { threadId?: string; turnId?: string; turn?: { id?: string; status?: string }; delta?: string; rateLimits?: { primary?: RateWindow | null; secondary?: RateWindow | null } } | undefined;
+    const value = params as { threadId?: string; turnId?: string; turn?: { id?: string; status?: string }; delta?: string; tokenUsage?: { last?: UsageBreakdown }; rateLimits?: { primary?: RateWindow | null; secondary?: RateWindow | null } } | undefined;
     const turnId = value?.turnId ?? value?.turn?.id;
-    const event = method === 'turn/started' ? { version: 1 as const, type: 'started' as const, runId: turnId! } : method === 'item/agentMessage/delta' ? { version: 1 as const, type: 'delta' as const, runId: turnId!, data: { text: value?.delta } } : method === 'turn/completed' ? { version: 1 as const, type: value?.turn?.status === 'completed' ? 'completed' as const : 'failed' as const, runId: turnId!, data: value?.turn?.status === 'completed' ? undefined : { providerStatus: value?.turn?.status } } : undefined;
+    const usage = method === 'thread/tokenUsage/updated' ? tokenUsage(value?.tokenUsage?.last) : undefined;
+    const event = usage ? { version: 1 as const, type: 'usage' as const, runId: turnId!, data: usage } : method === 'turn/started' ? { version: 1 as const, type: 'started' as const, runId: turnId! } : method === 'item/agentMessage/delta' ? { version: 1 as const, type: 'delta' as const, runId: turnId!, data: { text: value?.delta } } : method === 'turn/completed' ? { version: 1 as const, type: value?.turn?.status === 'completed' ? 'completed' as const : 'failed' as const, runId: turnId!, data: value?.turn?.status === 'completed' ? undefined : { providerStatus: value?.turn?.status } } : undefined;
     if (event && turnId) { const ref = this.turns.get(turnId); if (ref) { ref.emit(event); if (method === 'turn/completed') this.clearTurn(turnId); } else { const queued = this.earlyEvents.get(turnId) ?? []; queued.push(event); this.earlyEvents.set(turnId, queued); if (method === 'turn/completed' && value?.threadId) this.clearQueuedThread(value.threadId); } }
     else if (method === 'account/rateLimits/updated') this.emit('quota', this.quota(value?.rateLimits));
     else if (method === 'account/login/completed') this.emit('login', { method, params });

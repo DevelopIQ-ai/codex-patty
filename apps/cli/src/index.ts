@@ -16,6 +16,7 @@ else if (command === 'accounts' && args[0] === 'add') await request('/v1/account
 else if (command === 'accounts' && args[0] === 'refresh') await request(`/v1/accounts/${args[1]}/refresh`, { method: 'POST' });
 else if (command === 'accounts' && args[0] === 'remove') await request(`/v1/accounts/${args[1]}`, { method: 'DELETE' });
 else if (command === 'models') await request('/v1/models');
+else if (command === 'usage') await request('/v1/usage');
 else if (command === 'status' || command === 'doctor') await request('/v1/router/status');
 else if (command === 'thread') await request('/v1/threads', { method: 'POST', body: JSON.stringify({ model: args[0], accountId: args[1] }) });
 else if (command === 'turn') await request(`/v1/threads/${args[0]}/turns`, { method: 'POST', body: JSON.stringify({ model: args[1], input: args.slice(2).join(' ') }) });
@@ -23,4 +24,4 @@ else if (command === 'approve') await request(`/v1/runs/${args[0]}/approvals/${a
 else if (command === 'events') { const response=await fetch(`${base}/v1/runs/${args[0]}/events`,{headers:{authorization:`Bearer ${key??''}`}}); if(!response.body) throw new Error('SSE unavailable'); for await(const chunk of response.body) process.stdout.write(Buffer.from(chunk).toString()); }
 else if (command === 'cancel') await request(`/v1/runs/${args[0]}/cancel`, { method: 'POST' });
 else if (command === 'run') await request('/v1/runs', { method: 'POST', body: JSON.stringify({ model: args[0], input: args.slice(1).join(' ') }) });
-else { process.exitCode=1; console.error('usage: patty init <key> | accounts add|list|refresh|remove | models | status | doctor | thread <model> [account] | turn <thread> <model> <input> | events <run> | approve <run> <approval> yes|no | run <model> <input> | cancel <run>'); }
+else { process.exitCode=1; console.error('usage: patty init <key> | accounts add|list|refresh|remove | models | usage | status | doctor | thread <model> [account] | turn <thread> <model> <input> | events <run> | approve <run> <approval> yes|no | run <model> <input> | cancel <run>'); }
