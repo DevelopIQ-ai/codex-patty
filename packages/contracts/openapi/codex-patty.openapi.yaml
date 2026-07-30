@@ -16,6 +16,11 @@ components:
     KeyId: { name: id, in: path, required: true, schema: { type: string } }
     ApprovalId: { name: approval_id, in: path, required: true, schema: { type: string } }
   schemas:
+    KeyLimits:
+      type: object
+      properties:
+        rpm: { type: integer, minimum: 1, nullable: true, description: 'Requests started per rolling minute; null or absent is unlimited' }
+        concurrency: { type: integer, minimum: 1, nullable: true, description: 'Runs in flight at once; a slot is held until the run settles, not until the response is sent' }
     Run:
       type: object
       required: [model, input]
@@ -66,8 +71,17 @@ paths:
   /v1/router/status: { get: { security: [{PattyKey: []}], responses: {'200': {description: Router status}} } }
   /v1/api-keys:
     get: { security: [{PattyKey: []}], responses: {'200': {description: 'Issued keys with name, prefix, creation, last use and revocation state; never the secret'}} }
-    post: { security: [{PattyKey: []}], requestBody: {required: false, content: {application/json: {schema: {type: object, properties: {name: {type: string, description: 'Human label, e.g. puffle-prod'}}}}}}, responses: {'201': {description: 'Issued key; the secret is returned once and never again'}} }
+    post: { security: [{PattyKey: []}], requestBody: {required: false, content: {application/json: {schema: {allOf: [{type: object, properties: {name: {type: string, description: 'Human label, e.g. puffle-prod'}}}, {$ref: '#/components/schemas/KeyLimits'}]}}}}, responses: {'201': {description: 'Issued key; the secret is returned once and never again'}} }
   /v1/api-keys/{id}: { delete: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/KeyId'}], responses: {'204': {description: Revoked}} } }
+  /v1/api-keys/{id}/limits:
+    put:
+      security: [{PattyKey: []}]
+      parameters: [{$ref: '#/components/parameters/KeyId'}]
+      description: 'Replaces the key policy wholesale; an omitted or null field is unlimited. A request over a limit waits in the key queue and is only answered 429 (with Retry-After) when the queue is full or the wait would exceed it.'
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/KeyLimits'}}}}
+      responses:
+        '200': {description: Limits in force for the key}
+        '400': {description: 'Invalid limit; values must be integers of at least 1'}
   /v1/accounts: { get: { security: [{PattyKey: []}], responses: {'200': {description: Accounts}} } }
   /v1/accounts/openai-compatible: { post: { security: [{PattyKey: []}], requestBody: {required: true, content: {application/json: {schema: {type: object, required: [alias, baseUrl, apiKeyEnv], properties: {alias: {type: string}, baseUrl: {type: string, description: 'http(s) base URL of an OpenAI-compatible endpoint'}, apiKeyEnv: {type: string, description: 'Name of the environment variable holding the provider key; the secret itself is never sent or stored'}, tier: {type: string, enum: [primary, fallback], default: fallback, description: 'fallback subs are only used once every primary sub is exhausted'}}}}}}, responses: {'201': {description: Stacked sub}} } }
   /v1/accounts/codex/login: { post: { security: [{PattyKey: []}], responses: {'202': {description: Login challenge}} } }

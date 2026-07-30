@@ -115,7 +115,8 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 
   <section class="wide">
     <h2>API keys</h2>
-    <table><thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Last used</th><th>State</th><th></th></tr></thead><tbody id="keys"><tr><td colspan="6" class="muted">connect to load</td></tr></tbody></table>
+    <table><thead><tr><th>Name</th><th>Prefix</th><th>Req/min</th><th>Concurrent</th><th>Load now</th><th>Last used</th><th>State</th><th></th></tr></thead><tbody id="keys"><tr><td colspan="8" class="muted">connect to load</td></tr></tbody></table>
+    <p class="muted" id="queue-policy"></p>
     <div class="row" style="margin-top:12px">
       <input id="key-name" class="grow" placeholder="key name, e.g. puffle-prod" />
       <button id="issue-key">Create key</button>
@@ -155,6 +156,8 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 <script type="module">
 const el = id => document.getElementById(id);
 const fmt = value => Number(value ?? 0).toLocaleString();
+/** A provider that reports no counters leaves a run unmetered, which is not the same as a run that cost nothing. */
+const tokens = value => value === null || value === undefined ? '<span class="muted" title="this provider reported no token counts">not reported</span>' : fmt(value);
 let key = localStorage.getItem('patty.key') ?? '';
 let threadId = null, runId = null, stream = null;
 el('key').value = key;
@@ -238,14 +241,25 @@ function keyLabel(name, keyId, prefix) {
   return name ? '<code>' + name + '</code>' : '<code>' + (prefix ? 'cp_live_' + prefix : keyId) + '</code>';
 }
 
-function renderKeys(keys) {
+function renderKeys(keys, queue) {
+  const limitCell = (entry, field) => entry.revoked_at ? '<span class="muted">—</span>' : '<input type="number" min="1" style="width:88px" placeholder="unlimited" data-limit="' + entry.id + '" data-field="' + field + '" value="' + (entry[field] === null || entry[field] === undefined ? '' : entry[field]) + '" />';
+  const loadCell = entry => entry.queued ? '<span class="err">' + entry.inFlight + ' running · ' + entry.queued + ' queued</span>' : '<span class="muted">' + entry.inFlight + ' running</span>';
   el('keys').innerHTML = keys.length ? keys.map(entry => \`<tr>
     <td>\${entry.name ? '<code>' + entry.name + '</code>' : '<span class="muted">unnamed</span>'}</td>
     <td class="muted"><code>cp_live_\${entry.prefix}_…</code></td>
-    <td class="muted">\${new Date(entry.created_at).toLocaleString()}</td>
+    <td>\${limitCell(entry, 'rpm')}</td>
+    <td>\${limitCell(entry, 'concurrency')}</td>
+    <td>\${loadCell(entry)}</td>
     <td class="muted">\${entry.last_used_at ? new Date(entry.last_used_at).toLocaleString() : 'never'}</td>
     <td class="\${entry.revoked_at ? 'err' : 'ok'}">\${entry.revoked_at ? 'revoked' : 'active'}</td>
-    <td>\${entry.revoked_at ? '' : '<button class="danger" data-revoke="' + entry.id + '">revoke</button>'}</td></tr>\`).join('') : '<tr><td colspan="6" class="muted">no keys issued</td></tr>';
+    <td>\${entry.revoked_at ? '' : '<button class="danger" data-revoke="' + entry.id + '">revoke</button>'}</td></tr>\`).join('') : '<tr><td colspan="8" class="muted">no keys issued</td></tr>';
+  if (queue) el('queue-policy').textContent = 'A key over its limit waits for a slot instead of failing: up to ' + queue.maxDepth + ' requests queue per key for up to ' + Math.round(queue.maxWaitMs / 1000) + 's, and only what still cannot be served is answered 429 with Retry-After. Blank means unlimited.';
+  for (const input of el('keys').querySelectorAll('[data-limit]')) input.onchange = async () => {
+    const row = keys.find(entry => entry.id === input.dataset.limit);
+    const value = field => { const raw = field === input.dataset.field ? input.value : row[field]; return raw === '' || raw === null || raw === undefined ? null : Number(raw); };
+    await api('/v1/api-keys/' + input.dataset.limit + '/limits', { method: 'PUT', body: JSON.stringify({ rpm: value('rpm'), concurrency: value('concurrency') }) });
+    await load();
+  };
   for (const button of el('keys').querySelectorAll('[data-revoke]')) button.onclick = async () => { if (confirm('Revoke this key? Anything using it stops working immediately.')) { await api('/v1/api-keys/' + button.dataset.revoke, { method: 'DELETE' }); await load(); } };
 }
 
@@ -254,7 +268,7 @@ function renderHistory(runs) {
     <td><code>\${run.runId}</code></td><td><code>\${run.alias}</code></td><td class="muted">\${keyLabel(run.keyName, run.keyId, run.keyPrefix)}</td>
     <td class="muted">\${run.model ?? '—'}</td><td class="\${run.status === 'completed' ? 'ok' : run.status === 'failed' ? 'err' : 'muted'}">\${run.status}</td>
     <td class="\${run.attempts > 1 ? 'warn' : 'muted'}">\${run.attempts}</td>
-    <td>\${fmt(run.inputTokens)}</td><td>\${fmt(run.outputTokens)}</td><td>\${fmt(run.totalTokens)}</td>
+    <td>\${tokens(run.inputTokens)}</td><td>\${tokens(run.outputTokens)}</td><td>\${tokens(run.totalTokens)}</td>
     <td class="muted">\${new Date(run.createdAt).toLocaleTimeString()}</td></tr>\`).join('') : '<tr><td colspan="10" class="muted">no runs match these filters</td></tr>';
   el('runs-count').textContent = runs.length + ' run(s)';
 }
@@ -291,7 +305,7 @@ async function load() {
   if (!key) { setAuth('no key', 'err'); return; }
   try {
     const [accounts, router, models, usage, keys, doctor] = await Promise.all([api('/v1/accounts'), api('/v1/router/status'), api('/v1/models'), api('/v1/usage'), api('/v1/api-keys'), api('/v1/doctor')]);
-    renderAccounts(accounts.data); renderRouter(router.data); renderModels(models.data); renderUsage(usage.data); renderKeys(keys.data); renderDoctor(doctor.data);
+    renderAccounts(accounts.data); renderRouter(router.data); renderModels(models.data); renderUsage(usage.data); renderKeys(keys.data, keys.queue); renderDoctor(doctor.data);
     fillFilter('f-sub', accounts.data.map(account => ({ value: account.alias, label: account.alias })));
     fillFilter('f-model', models.data.map(model => ({ value: model.id, label: model.id })));
     fillFilter('f-key', keys.data.map(entry => ({ value: entry.id, label: entry.name ?? 'cp_live_' + entry.prefix })));

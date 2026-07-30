@@ -388,3 +388,76 @@ describe('OpenAI-compatible provider adapter', () => {
     expect(daemon.store.accounts()).toHaveLength(0);
   });
 });
+
+describe('per-key rate limits and queueing', () => {
+  const boot = async (limits: { rpm?: number; concurrency?: number }) => {
+    const daemon = new PattyDaemon();
+    daemon.addFakeAccount('shared', ['gpt-5-codex']);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    const issued = await (await fetch(`http://127.0.0.1:${port}/v1/api-keys`, { method: 'POST', headers, body: JSON.stringify({ name: 'puffle-prod' }) })).json() as { id: string; key: string };
+    const set = await fetch(`http://127.0.0.1:${port}/v1/api-keys/${issued.id}/limits`, { method: 'PUT', headers, body: JSON.stringify(limits) });
+    expect(set.status).toBe(200);
+    const complete = (content: string) => fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${issued.key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content }] }) });
+    return { daemon, port, headers, issued, complete };
+  };
+
+  it('serves a burst past the concurrency limit by queueing it instead of failing it', async () => {
+    const { port, headers, complete } = await boot({ concurrency: 1 });
+    const answers = await Promise.all(['a', 'b', 'c'].map(complete));
+    expect(answers.map(answer => answer.status)).toEqual([200, 200, 200]);
+    const listed = await (await fetch(`http://127.0.0.1:${port}/v1/api-keys`, { headers })).json() as { data: { name: string | null; rpm: number | null; concurrency: number | null; inFlight: number; queued: number; throttled: number }[]; queue: { maxDepth: number; maxWaitMs: number } };
+    const key = listed.data.find(entry => entry.name === 'puffle-prod')!;
+    expect(key).toMatchObject({ rpm: null, concurrency: 1, queued: 0, throttled: 0 });
+    expect(listed.queue.maxDepth).toBeGreaterThan(0);
+  });
+
+  it('answers 429 with Retry-After once the rolling minute cannot be waited out', async () => {
+    const { port, headers, complete } = await boot({ rpm: 1 });
+    expect((await complete('first')).status).toBe(200);
+    const denied = await complete('second');
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get('retry-after'))).toBeGreaterThan(0);
+    const body = await denied.json() as { error: { code: string; retryable: boolean; retryAfterMs: number } };
+    expect(body.error).toMatchObject({ code: 'rate_limited', retryable: true });
+    expect(body.error.retryAfterMs).toBeGreaterThan(0);
+    const metrics = await (await fetch(`http://127.0.0.1:${port}/metrics`, { headers })).text();
+    expect(metrics).toContain('patty_key_limit_rpm{key="puffle-prod"} 1');
+    expect(metrics).toContain('patty_key_throttled_total{key="puffle-prod"} 1');
+    expect(metrics).toContain('patty_key_in_flight{key="puffle-prod"} 0');
+  });
+
+  it('leaves other keys unlimited and rejects a nonsense limit', async () => {
+    const { port, headers, issued } = await boot({ concurrency: 2 });
+    const other = await (await fetch(`http://127.0.0.1:${port}/v1/api-keys`, { method: 'POST', headers, body: JSON.stringify({ name: 'free' }) })).json() as { rpm?: number; concurrency?: number };
+    expect(other.rpm).toBeUndefined();
+    expect(other.concurrency).toBeUndefined();
+    const bad = await fetch(`http://127.0.0.1:${port}/v1/api-keys/${issued.id}/limits`, { method: 'PUT', headers, body: JSON.stringify({ rpm: 0 }) });
+    expect(bad.status).toBe(400);
+    const cleared = await fetch(`http://127.0.0.1:${port}/v1/api-keys/${issued.id}/limits`, { method: 'PUT', headers, body: JSON.stringify({}) });
+    expect(await cleared.json()).toEqual({ id: issued.id });
+  });
+});
+
+it('answers a saturated stack with a retryable 503 rather than a fatal 400', async () => {
+  const daemon = new PattyDaemon(); const account = daemon.addFakeAccount('busy'); server = await daemon.listen();
+  const port = (server.address() as { port: number }).port; const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+  daemon.store.updateAccount({ ...account, activeRuns: 2 });
+  const response = await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'x' }) });
+  expect(response.status).toBe(503);
+  expect(response.headers.get('retry-after')).toBe('5');
+  const body = await response.json() as { error: { code: string; retryable: boolean; retryAfterMs: number } };
+  expect(body.error).toMatchObject({ code: 'no_eligible_account', retryable: true, retryAfterMs: 5_000 });
+});
+
+it('names the model in run history even when the provider reports no usage', async () => {
+  const daemon = new PattyDaemon(); daemon.addFakeAccount('unmetered'); server = await daemon.listen();
+  const port = (server.address() as { port: number }).port; const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+  const { id } = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'x' }) })).json() as { id: string };
+  daemon.store.db.prepare('DELETE FROM usage_events WHERE run_id=?').run(id);
+  const history = await (await fetch(`http://127.0.0.1:${port}/v1/runs?model=gpt-5-codex`, { headers })).json() as { data: { runId: string; model: string | null; totalTokens: number | null }[] };
+  const row = history.data.find(entry => entry.runId === id);
+  expect(row?.model).toBe('gpt-5-codex');
+  expect(row?.totalTokens).toBeNull();
+});

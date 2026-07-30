@@ -140,6 +140,32 @@ run it; keep live state in its own DB/home root so fake-mode testing cannot clob
 - Cross-tier 429 failover has no runtime fault-injection hook; it is covered by `FakeAdapter.failNext` in
   `test/integration.test.ts` rather than through the console.
 
+## Per-API-key admission control (rpm / concurrency)
+- Limits live in SQLite (`api_keys.rpm` / `.concurrency`), so the restart-persistence assertion needs a
+  **file-backed** DB: `PATTY_DB_PATH=/tmp/<dir>/patty.sqlite`. Relaunch with the *same* `--fake=` arguments,
+  otherwise the fake subs come back `reconnect_required` and it looks like a restore bug.
+- `PUT /v1/api-keys/{id}/limits` replaces the whole policy; the console's Req/min and Concurrent inputs PUT both
+  fields on every change. The discriminating assertion is clearing one field: `/metrics` should drop only
+  `patty_key_limit_rpm{key=…}` while `patty_key_limit_concurrency{key=…}` survives.
+- **A concurrency queue is invisible against the built-in fake worker** — it settles synchronously, so a burst never
+  shows `queued>0`. Stack a slow OpenAI-compatible provider instead (a ~4 s `chat/completions` + a `/models` route is
+  enough; a fixture exists at `/tmp/slowprovider.mjs`, port 4320) and send that sub's model. The adapter snapshots the
+  provider at add time and requires the env var named by `apiKeyEnv` to exist in the *daemon's* env (e.g.
+  `SLOW_KEY=sk-local-placeholder`), or the add returns `invalid_request`.
+- Expect completion times in bands: with `concurrency:N` against a 4 s provider, a burst finishes N at a time every
+  ~4 s and every request returns 200. `Load now` renders `"<inFlight> running · <queued> queued"` in red only while
+  requests are actually waiting, so refresh the console 1–2 s into the burst — refresh late and you only see
+  `N running`.
+- Every rpm assertion needs a **freshly created key**: the rolling 60 s window counts all requests already started by
+  that key, so a reused key is instantly over a small limit. With `rpm:2`, requests 3+ are denied immediately (the
+  ~60 s wait exceeds `PATTY_KEY_QUEUE_WAIT_MS=20000`) and return 429 + integer `Retry-After` + `error.retryAfterMs`.
+- Per-sub concurrency (`active 0/2`) is a *separate* gate from per-key limits. If only one sub serves the model you
+  are hammering, an unlimited key's request can be rejected with `400 invalid_request` because no sub is servable —
+  don't misread that as a key-limit failure. For key-isolation tests, keep the saturated key's concurrency below the
+  sub's cap (e.g. `1`) so the second key still has a sub slot.
+- openai-compatible runs currently record Model `—` and 0 tokens in Run history even when the provider reports usage,
+  so verify per-key/per-sub metering with the fake Codex subs instead.
+
 ## Devin Secrets Needed
 - None for fake/`--fake` mode.
 - Live mode needs no Devin secret, but does need operator-supplied material that cannot be self-served: real logged-in
