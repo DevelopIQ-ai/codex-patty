@@ -1,0 +1,19 @@
+name: Feature request
+description: Something Patty should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that Patty makes hard or impossible today?
+    validations: {required: true}
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: Rough shape is fine — an endpoint, a flag, a console view.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today

@@ -1,0 +1,41 @@
+name: Bug report
+description: Something Patty does that it shouldn't
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations: {required: true}
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: >
+        Ideally with fake subs so anyone can run it, e.g.
+        `npx codex-patty --fake=a:0.8 --fake=b:0.2` plus the request you sent.
+      render: shell
+    validations: {required: true}
+  - type: input
+    id: version
+    attributes:
+      label: Patty and Node version
+      placeholder: codex-patty 0.1.0, node 22.14.0
+    validations: {required: true}
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: >
+        Daemon JSON log lines, `patty doctor`, or `/metrics`. Patty never logs prompts,
+        output or secrets, but please check anything you paste for your own API keys.
+      render: shell
+  - type: checkboxes
+    id: live
+    attributes:
+      label: Subs involved
+      options:
+        - label: Reproduces with fake subs (`--fake=...`)
+        - label: Only with real Codex subs
+        - label: Only with an OpenAI-compatible sub
