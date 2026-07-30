@@ -26,7 +26,18 @@ export type UsageTotals = TokenUsage & { runs: number };
 export type AccountUsage = UsageTotals & { accountId: string; alias: string };
 export type RunUsage = TokenUsage & { runId: string; accountId: string; alias: string; model: string; observedAt: string; keyId: string | null; keyName: string | null };
 export type KeyUsage = UsageTotals & { keyId: string | null; name: string | null; prefix: string | null };
-export type UsageReport = { totals: UsageTotals; accounts: AccountUsage[]; keys: KeyUsage[]; runs: RunUsage[] };
+/**
+ * Dollars are always an estimate: the token counts are the provider's, but the prices come from a
+ * local table, so a model with no price is counted as unpriced instead of as free.
+ */
+export type CostBreakdown = { estimatedCostUsd: number; unpricedRuns: number };
+/**
+ * What the stack is worth. `subscriptionUsd` is what the turns served by `primary` subs would have
+ * cost at API list price — money the subscriptions absorbed — and `apiUsd` is what the `fallback`
+ * subs actually spent because the stack could not serve the request.
+ */
+export type CostSummary = CostBreakdown & { subscriptionUsd: number; apiUsd: number; unpricedModels: string[] };
+export type UsageReport = { totals: UsageTotals & { cost: CostBreakdown }; accounts: (AccountUsage & { tier: AccountTier; cost: CostBreakdown })[]; keys: (KeyUsage & { cost: CostBreakdown })[]; runs: (RunUsage & { estimatedCostUsd: number | null })[]; cost: CostSummary };
 export type PattyErrorCode = 'invalid_request' | 'unauthorized' | 'idempotency_conflict' | 'no_eligible_account' | 'rate_limited' | 'model_unavailable' | 'account_reconnect_required' | 'account_cooldown' | 'approval_timeout' | 'upstream_overloaded' | 'upstream_failed' | 'protocol_incompatible';
 export type PattyError = { error: { code: PattyErrorCode; message: string; requestId: string; retryable: boolean; retryAfterMs?: number } };
 
