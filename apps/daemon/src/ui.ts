@@ -134,7 +134,7 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
       <select id="f-model"><option value="">all models</option></select>
       <select id="f-status"><option value="">all statuses</option><option value="completed">completed</option><option value="running">running</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select>
       <select id="f-key"><option value="">all keys</option></select>
-      <select id="f-limit"><option value="25">25</option><option value="50" selected>50</option><option value="200">200</option></select>
+      <select id="f-limit"><option value="10">10</option><option value="25">25</option><option value="50" selected>50</option><option value="200">200</option></select>
       <button id="refresh-runs">Apply</button>
       <span class="muted" id="runs-count"></span>
     </div>
@@ -237,7 +237,7 @@ function renderKeys(keys) {
 
 function renderHistory(runs) {
   el('recent').innerHTML = runs.length ? runs.map(run => \`<tr>
-    <td><code>\${run.runId}</code></td><td><code>\${run.alias}</code></td><td class="muted">\${keyLabel(run.keyName, run.keyId)}</td>
+    <td><code>\${run.runId}</code></td><td><code>\${run.alias}</code></td><td class="muted">\${keyLabel(run.keyName, run.keyId, run.keyPrefix)}</td>
     <td class="muted">\${run.model ?? '—'}</td><td class="\${run.status === 'completed' ? 'ok' : run.status === 'failed' ? 'err' : 'muted'}">\${run.status}</td>
     <td class="\${run.attempts > 1 ? 'warn' : 'muted'}">\${run.attempts}</td>
     <td>\${fmt(run.inputTokens)}</td><td>\${fmt(run.outputTokens)}</td><td>\${fmt(run.totalTokens)}</td>

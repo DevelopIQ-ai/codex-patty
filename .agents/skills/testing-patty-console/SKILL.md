@@ -59,6 +59,38 @@ PATTY_PORT=3211 node apps/daemon/dist/src/main.js --fake=sub-a --fake=sub-b:0.4
 - Auth sanity checks: `GET /` and `/healthz` are unauthenticated (HTML 200 / `{"ok":true}`); every `/v1/*` route needs
   `authorization: Bearer cp_live_…` and returns 401 otherwise.
 
+## Demo mode, named keys, filters, metrics and packaging (PRs #6–#9)
+- Fastest full-console setup: `corepack pnpm demo` = build + three fake subs with distinct quota/reset
+  (`--fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14`) on the default port 3210.
+  `--fake=<alias>[:<quota>[:<resetMinutes>]]`. Delete `.patty` first if you need a fresh one-time key, and check
+  `ss -ltnp` for a stale daemon holding the default DB before assuming the URL is broken.
+- Router explanation (`#routing-why`) reads `next request routes to <alias> — most headroom (a% vs b% vs c%)` and only
+  appends the `use-it-or-lose-it` clause when the winner is *also* the soonest to reset — with 82/55/31 it must be
+  absent, which is a good discriminator against an always-append implementation.
+- With unequal quotas every request goes to the highest-quota sub, even six concurrent ones (fake runs finish before
+  the 2-run lease overlaps), so multi-sub run history for the **sub filter** cannot be produced by spamming
+  `/v1/chat/completions`. Pin runs instead: `POST /v1/runs {model, input, accountId}` with ids from `/v1/accounts`.
+- Named keys: `#key-name` + **Create key** shows the secret once in `#issued`; `Store.keys()` never selects the hash,
+  so the table only ever shows `cp_live_<prefix>_…`. Reload the page to prove it is not re-listed. Note the one-time
+  line **does** put the full secret on screen — if you are recording, expect it in the video, revoke the key at the end
+  and keep it out of screenshots/reports. Run history labels named keys by name but unnamed ones by raw `key_…` id,
+  while "Usage per key" shows `cp_live_<prefix>` — cosmetic inconsistency, not a bug.
+- Revoking is asymmetric like sub removal: `revoked` state + 401 for that secret, but its "Usage per key" row and
+  history stay; Doctor's `active_keys` count drops, so it reflects live state.
+- The history **limit** select's smallest option is 25, so with <25 runs it cannot demonstrate truncation — verify the
+  wired parameter directly (`GET /v1/runs?limit=2`) and say so rather than claiming a UI pass.
+- `/metrics` needs the bearer key (401 otherwise) and returns `text/plain; version=0.0.4`. Strongest assertion is
+  cross-checking a label against the UI, e.g. `patty_key_tokens_total{key="puffle-prod"}` == that key's UI total.
+- Packaging: `corepack pnpm pack:npm` → `dist-npm` (no `node_modules`); `node dist-npm/bin/codex-patty.mjs` with no
+  args / `start` / `up` / `--…` starts the daemon, any other word (e.g. `usage`) delegates to the packed CLI with
+  `PATTY_URL`/`PATTY_API_KEY`. Always give it its own `PATTY_PORT` + `PATTY_DB_PATH` so it cannot reuse the demo DB,
+  and confirm the CLI output really came from that daemon (alias/run count).
+- Bind guard is startup-time only (`assertBindable`): wildcard (`0.0.0.0`, `::`, empty) always throws
+  "refusing to bind a wildcard address", and a non-loopback host without `PATTY_ALLOW_NON_LOOPBACK=1` throws
+  "refusing to bind <host>: loopback is the default". Never attempt a *successful* non-loopback bind on a shared box.
+  Watch out: a bare `nvm use 22` can silently fail ("No .nvmrc file found") and leave you on Node 22.12, whose
+  `node:sqlite` error looks like a crash unrelated to the guard — check `node -v` before interpreting failures.
+
 ## Live Codex mode (real ChatGPT subs)
 Live mode is gated fail-closed by `PattyDaemon.liveCodexCommand()`: it returns a command only when
 `PATTY_ENABLE_LIVE_CODEX=1`, `PATTY_CODEX_VERSION=0.145.0`, `PATTY_CODEX_COMMAND` is set, and the file at
