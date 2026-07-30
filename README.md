@@ -10,20 +10,44 @@ Patty is a local, loopback-only daemon that holds several signed-in Codex/ChatGP
 
 ![Codex Patty console: three stacked subs, router scores, a streamed run and per-sub token metering](docs/images/console.png)
 
-## Try it in 60 seconds (no subscription needed)
+## Setup
 
-```sh
-npx codex-patty --fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14
-```
+Hand this to your coding agent (Codex, Claude Code, Cursor, aider — anything with a shell). It sets Patty up, proves it works without touching a real account, and stops before anything that needs your hands.
 
-Or from a clone, which is the same thing with three demo subs pre-set:
+````text
+Set up codex-patty (https://github.com/DevelopIQ-ai/codex-patty) on this machine for me.
 
-```sh
-corepack pnpm install
-corepack pnpm demo
-```
+1. Check `node -v` is >= 22.5 — the store uses `node:sqlite` and older Node fails with
+   "No such built-in module: node:sqlite". If it is older, install Node 22 (nvm, volta,
+   brew, whatever this machine already uses) and use it for everything below.
+2. Start it with three fake subs so nothing real is touched:
+       npx codex-patty --fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14
+   The daemon prints a one-time `cp_live_…` API key on its first line. Save it — it is
+   shown once. It listens on http://127.0.0.1:3210 and nothing else can reach it.
+3. Prove it end to end with that key:
+       curl -s http://127.0.0.1:3210/v1/models -H "authorization: Bearer $KEY"
+       curl -s http://127.0.0.1:3210/v1/chat/completions -H "authorization: Bearer $KEY" \
+         -H 'content-type: application/json' \
+         -d '{"model":"gpt-5-codex","messages":[{"role":"user","content":"hello"}]}' -i
+   Report back the answer and the `x-patty-sub` response header, which names the sub that
+   served it. Then open http://127.0.0.1:3210/ and paste the key into the console.
+4. Tell me the two env vars to point any OpenAI client at it:
+       OPENAI_BASE_URL=http://127.0.0.1:3210/v1
+       OPENAI_API_KEY=<the cp_live_… key>
+   and create a named key per consumer with `patty keys create <name>`.
+5. Then STOP and tell me these two things need me, because you cannot do them:
+   - Adding my real subscriptions: live mode is fail-closed and needs
+     PATTY_ENABLE_LIVE_CODEX=1, a pinned PATTY_CODEX_COMMAND/PATTY_CODEX_VERSION, and an
+     authorization-evidence file I write and attest to myself
+     (see docs/provider-authorization.md). Each sub then signs in through a browser.
+   - Keeping it running as a service, if I want that (docs/operations.md), or putting it
+     on an always-on box for an app to use (docs/deploy.md).
 
-Open <http://127.0.0.1:3210/> and paste the one-time `cp_live_…` key the daemon printed. `--fake=<alias>[:<quotaRemaining>[:<minutesUntilReset>]]` stacks fake subs, so routing, streaming and per-sub metering are all observable without touching a real account. That's exactly what the screenshot above shows.
+Rules: do not weaken the loopback default, do not create the authorization-evidence file
+on my behalf, and do not put any API key in a file you commit.
+````
+
+Doing it by hand is the same four lines: `npx codex-patty --fake=…` (or `corepack pnpm install && corepack pnpm demo` from a clone), open <http://127.0.0.1:3210/>, paste the printed key. `--fake=<alias>[:<quotaRemaining>[:<minutesUntilReset>]]` stacks fake subs, so routing, streaming and per-sub metering are all observable without touching a real account — that is exactly what the animation above shows.
 
 ## Use it with real subs
 

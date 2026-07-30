@@ -25,6 +25,10 @@ CI runs exactly this. Please also:
 - Update `packages/contracts/openapi/codex-patty.openapi.yaml` when you touch the HTTP surface.
 - Add a line to the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md) for anything a user would notice.
 
+## Releasing
+
+Publishing is a tag, not a manual `npm publish`: bump `version` in the root `package.json`, move the `Unreleased` CHANGELOG entries under it, then push `vX.Y.Z`. The `release` workflow reruns every suite, fails if the tag and `package.json` disagree, and publishes `dist-npm` with provenance using the `NPM_TOKEN` repository secret (an npm automation token). `workflow_dispatch` runs everything except the publish, which is the way to check a release before tagging.
+
 ## Good first areas
 
 - Routing strategies (quota-reset awareness, cost weighting, sticky sessions).
