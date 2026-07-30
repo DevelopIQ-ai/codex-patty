@@ -15,7 +15,10 @@
     "test:integration": "corepack pnpm --filter @patty/daemon test:integration",
     "test:e2e:fake": "corepack pnpm --filter @patty/daemon test:e2e:fake",
     "test:live": "corepack pnpm --filter @patty/daemon test:live",
-    "openapi:lint": "redocly lint packages/contracts/openapi/codex-patty.openapi.yaml"
+    "openapi:lint": "redocly lint packages/contracts/openapi/codex-patty.openapi.yaml",
+    "test:pack": "corepack pnpm pack:npm && node scripts/pack-smoke.mjs",
+    "demo": "corepack pnpm build && node apps/daemon/dist/src/main.js --fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14",
+    "pack:npm": "corepack pnpm build && node scripts/pack.mjs"
   },
   "devDependencies": {
     "@openai/codex": "0.145.0",

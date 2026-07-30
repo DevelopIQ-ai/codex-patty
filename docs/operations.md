@@ -9,3 +9,11 @@ The Codex account lifecycle is deliberately disabled unless `PATTY_ENABLE_LIVE_C
 ## Live account homes
 
 Codex itself may persist its managed credentials in each isolated `CODEX_HOME` so an explicitly authorized operator can resume a device-code login. Patty never reads, exports, or parses those credentials or `auth.json`. Patty creates or accepts only owner-owned, non-symlink account roots and homes, then enforces mode `0700`. The live harness preserves those homes on success or failure for explicit operator resumption; it does not create evidence artifacts. If a persistent home is not already logged in, it will only begin device-code login with `PATTY_LIVE_INTERACTIVE=1` in a TTY and writes the challenge directly to `/dev/tty`, never captured stdout or stderr.
+
+## Packaging and services
+
+`corepack pnpm pack:npm` builds the single publishable `codex-patty` package into `dist-npm/`: the compiled daemon, the CLI, the console and the `codex-patty` launcher, with no runtime dependencies (`@patty/contracts` is imported for types only, so nothing survives compilation). `corepack pnpm test:pack` then exercises that artifact the way a user meets it — `npx codex-patty` must boot, answer `/healthz`, serve a real `/v1/chat/completions` from a fake sub, and `codex-patty usage` must reach the running daemon — so a packaging regression fails CI rather than reaching npm.
+
+The launcher dispatches on its first argument: absent, `start`, `up` or a `--flag` starts the daemon; anything else is a CLI command. `pattyd` and `patty` remain available as direct bins.
+
+Under a service manager, the daemon needs only `PATTY_DB_PATH` (and, for live subs, the same live-mode variables listed above, including the authorization evidence path and digest — a service that lacks them starts in fake/offline mode by design rather than silently bypassing the gate). Use `Restart=on-failure`; the store reconciles in-flight runs transactionally at boot, so an abrupt restart cannot leave a sub with phantom active runs.

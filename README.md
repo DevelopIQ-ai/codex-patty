@@ -9,9 +9,14 @@ Patty is a local, loopback-only daemon that holds several signed-in Codex/ChatGP
 ## Try it in 60 seconds (no subscription needed)
 
 ```sh
+npx codex-patty --fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14
+```
+
+Or from a clone, which is the same thing with three demo subs pre-set:
+
+```sh
 corepack pnpm install
-corepack pnpm build
-node apps/daemon/dist/src/main.js --fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14
+corepack pnpm demo
 ```
 
 Open <http://127.0.0.1:3210/> and paste the one-time `cp_live_…` key the daemon printed. `--fake=<alias>[:<quotaRemaining>[:<minutesUntilReset>]]` stacks fake subs, so routing, streaming and per-sub metering are all observable without touching a real account. That's exactly what the screenshot above shows.
@@ -26,7 +31,7 @@ export PATTY_CODEX_COMMAND=$PWD/node_modules/.bin/codex
 export PATTY_CODEX_VERSION=0.145.0
 export PATTY_AUTHORIZATION_EVIDENCE=$HOME/.patty/authorization.txt   # your own attestation file
 export PATTY_AUTHORIZATION_SHA256=$(sha256sum $HOME/.patty/authorization.txt | cut -d' ' -f1)
-node apps/daemon/dist/src/main.js
+npx codex-patty
 ```
 
 Then add each subscription from the console's **Add sub** box (or `patty accounts add <alias>`), sign in in the browser window Codex opens, and repeat per sub. Logins live in each sub's isolated `CODEX_HOME`, so they survive restarts — the daemon re-attaches a worker to every stored sub at boot and prints what it recovered:
@@ -54,6 +59,28 @@ print(client.chat.completions.create(model="gpt-5-codex",
 Streaming (`stream=True`) yields standard `chat.completion.chunk` events; `usage` on the final chunk carries the provider's own counts. Every response includes an `x-patty-sub` header naming the sub that served it, and `GET /v1/models` lists each model with the subs that can serve it. Requests here route, meter and fail over exactly like `/v1/runs`.
 
 Not yet supported: tool/function calling, `n>1`, logprobs, and images.
+
+## Install and keep it running
+
+```sh
+npm i -g codex-patty     # or just use npx
+codex-patty              # starts the daemon (alias: pattyd)
+codex-patty usage        # any other argument is a CLI command (alias: patty)
+```
+
+One dependency-free package ships the daemon, the CLI and the console. To keep it up, run it under your OS supervisor — it is a plain long-running Node process that only listens on loopback:
+
+```ini
+# ~/.config/systemd/user/codex-patty.service   →  systemctl --user enable --now codex-patty
+[Service]
+ExecStart=%h/.local/share/npm/bin/codex-patty
+Environment=PATTY_DB_PATH=%h/.patty/patty.sqlite
+Restart=on-failure
+[Install]
+WantedBy=default.target
+```
+
+On macOS use a launchd agent with the same command. Full details, including the live-mode variables a service needs, are in [docs/operations.md](docs/operations.md).
 
 ## What it does
 

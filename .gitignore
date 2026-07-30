@@ -3,3 +3,4 @@ dist
 .patty
 *.sqlite
 coverage
+dist-npm/
