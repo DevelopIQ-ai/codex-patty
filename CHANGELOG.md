@@ -15,7 +15,7 @@ First working version: everything below landed before the project had a changelo
 
 ### Added
 
-- **Stacked subs.** Any number of Codex subscriptions, each isolated in its own `CODEX_HOME` and supervised as a `codex app-server` child process, added and removed at runtime and re-attached at boot. Live Codex is fail-closed behind `PATTY_ENABLE_LIVE_CODEX=1` plus local authorization evidence.
+- **Stacked subs.** Any number of Codex subscriptions, each isolated in its own `CODEX_HOME` and supervised as a `codex app-server` child process, added and removed at runtime and re-attached at boot. Real subs need only the Codex CLI, whose version is verified before Patty speaks to it.
 - **Any OpenAI-compatible endpoint** as a sub (`POST /v1/accounts/openai-compatible`), with the provider secret referenced by environment-variable name and never persisted.
 - **Tiered routing.** Subs are `primary` or `fallback`; every eligible primary is exhausted before metered API credit serves anything, and traffic returns to the stack as soon as a quota window rolls over.
 - **Routing on real state** — remaining quota as a rolling window, health, in-flight runs, model eligibility — under a transactional lease, with the console explaining the choice in words.

@@ -1,4 +1,4 @@
-import { access, chmod, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
@@ -32,7 +32,7 @@ it('rejects non-boolean approval decisions', async () => { const daemon=new Patt
 
 it('exposes authenticated models and router status', async () => { const daemon=new PattyDaemon();daemon.addFakeAccount('pool');server=await daemon.listen();const port=(server.address() as {port:number}).port;const headers={authorization:`Bearer ${daemon.key}`};expect((await fetch(`http://127.0.0.1:${port}/v1/models`,{headers})).status).toBe(200);expect((await fetch(`http://127.0.0.1:${port}/v1/router/status`,{headers})).status).toBe(200); });
 
-it('fails closed before creating account state when live prerequisites are absent', async () => { const keys=['PATTY_ENABLE_LIVE_CODEX','PATTY_AUTHORIZATION_EVIDENCE','PATTY_AUTHORIZATION_SHA256','PATTY_CODEX_COMMAND','PATTY_CODEX_VERSION'] as const;const saved=new Map(keys.map(key=>[key,process.env[key]]));for(const key of keys)delete process.env[key];const daemon=new PattyDaemon();try{await expect(daemon.addCodexAccount('offline','device_code')).rejects.toThrow('verified local authorization evidence and pinned command');expect(daemon.store.accounts()).toEqual([]);expect(daemon.adapters.size).toBe(0);expect(daemon.homes.size).toBe(0);}finally{await daemon.shutdown();for(const [key,value] of saved)value===undefined?delete process.env[key]:process.env[key]=value;} });
+it('leaves no account state behind when the Codex CLI cannot be started', async () => { const keys=['PATTY_CODEX_COMMAND','PATTY_ACCOUNT_HOME_ROOT'] as const;const saved=new Map(keys.map(key=>[key,process.env[key]]));const dir=await mkdtemp(join(tmpdir(),'patty-nocodex-'));process.env.PATTY_CODEX_COMMAND=join(dir,'no-such-codex');process.env.PATTY_ACCOUNT_HOME_ROOT=join(dir,'accounts');const daemon=new PattyDaemon();try{await expect(daemon.addCodexAccount('offline','device_code')).rejects.toThrow();expect(daemon.store.accounts()).toEqual([]);expect(daemon.adapters.size).toBe(0);expect(daemon.homes.size).toBe(0);}finally{await daemon.shutdown();for(const [key,value] of saved)value===undefined?delete process.env[key]:process.env[key]=value;await rm(dir,{recursive:true,force:true});} });
 
 
 it('enforces owner-only, non-symlink Codex home directories', async () => { const root = await mkdtemp(join(tmpdir(), 'patty-home-')); const privateRoot = privateDirectory(join(root, 'accounts')); expect((await stat(privateRoot)).mode & 0o777).toBe(0o700); await symlink(privateRoot, join(root, 'link')); expect(() => privateDirectory(join(root, 'link'))).toThrow('unsafe_account_home'); await chmod(privateRoot, 0o755); expect(privateDirectory(privateRoot)).toBe(privateRoot); expect((await stat(privateRoot)).mode & 0o777).toBe(0o700); });
@@ -46,8 +46,8 @@ it('replays in-flight output text to a subscriber that joins after the turn prod
 it('hides removed subs from accounts, router status, and models while keeping their usage history', async () => { const daemon=new PattyDaemon();const kept=daemon.addFakeAccount('kept');const dropped=daemon.addFakeAccount('dropped');server=await daemon.listen();const port=(server.address() as {port:number}).port;const headers={authorization:`Bearer ${daemon.key}`,'content-type':'application/json'};await fetch(`http://127.0.0.1:${port}/v1/runs`,{method:'POST',headers,body:JSON.stringify({model:'gpt-5-codex',input:'before removal',accountId:dropped.id})});await new Promise(resolve=>setTimeout(resolve,10));expect((await fetch(`http://127.0.0.1:${port}/v1/accounts/${dropped.id}`,{method:'DELETE',headers})).status).toBe(204);const list=await (await fetch(`http://127.0.0.1:${port}/v1/accounts`,{headers})).json() as {data:{id:string}[]};expect(list.data.map(account=>account.id)).toEqual([kept.id]);const router=await (await fetch(`http://127.0.0.1:${port}/v1/router/status`,{headers})).json() as {data:{alias:string}[]};expect(router.data.map(entry=>entry.alias)).toEqual(['kept']);const usage=await (await fetch(`http://127.0.0.1:${port}/v1/usage`,{headers})).json() as {data:{accounts:{alias:string}[]}};expect(usage.data.accounts.map(entry=>entry.alias)).toEqual(['dropped']); });
 
 describe('restart restore', () => {
-  const liveKeys = ['PATTY_ENABLE_LIVE_CODEX', 'PATTY_AUTHORIZATION_EVIDENCE', 'PATTY_AUTHORIZATION_SHA256', 'PATTY_CODEX_COMMAND', 'PATTY_CODEX_VERSION', 'PATTY_ACCOUNT_HOME_ROOT'] as const;
-  async function withLive<T>(dir: string, command: string, body: () => Promise<T>) { const saved = new Map(liveKeys.map(key => [key, process.env[key]])); const evidence = join(dir, 'evidence.txt'); await writeFile(evidence, 'attested'); process.env.PATTY_ENABLE_LIVE_CODEX = '1'; process.env.PATTY_AUTHORIZATION_EVIDENCE = evidence; process.env.PATTY_AUTHORIZATION_SHA256 = createHash('sha256').update(await readFile(evidence)).digest('hex'); process.env.PATTY_CODEX_COMMAND = command; process.env.PATTY_CODEX_VERSION = '0.145.0'; process.env.PATTY_ACCOUNT_HOME_ROOT = join(dir, 'accounts'); try { return await body(); } finally { for (const [key, value] of saved) value === undefined ? delete process.env[key] : process.env[key] = value; } }
+  const liveKeys = ['PATTY_CODEX_COMMAND', 'PATTY_ACCOUNT_HOME_ROOT'] as const;
+  async function withLive<T>(dir: string, command: string, body: () => Promise<T>) { const saved = new Map(liveKeys.map(key => [key, process.env[key]])); process.env.PATTY_CODEX_COMMAND = command; process.env.PATTY_ACCOUNT_HOME_ROOT = join(dir, 'accounts'); try { return await body(); } finally { for (const [key, value] of saved) value === undefined ? delete process.env[key] : process.env[key] = value; } }
   const stub = `#!/usr/bin/env node
 if(process.argv.includes('--version')){console.log('codex-cli 0.145.0');process.exit(0)}
 const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',line=>{const r=JSON.parse(line),out=x=>process.stdout.write(JSON.stringify(x)+'\\n');if(r.method==='initialize')out({jsonrpc:'2.0',id:r.id,result:{userAgent:'stub',codexHome:process.env.CODEX_HOME,platformFamily:'unix',platformOs:'linux'}});if(r.method==='account/login/start')out({jsonrpc:'2.0',id:r.id,result:{type:'chatgptDeviceCode',loginId:'login-1',verificationUrl:'https://example.invalid',userCode:'CODE'}});if(r.method==='account/logout')out({jsonrpc:'2.0',id:r.id,result:{}});if(r.method==='account/read')out({jsonrpc:'2.0',id:r.id,result:{account:{type:'chatgpt',email:null,planType:'pro'},requiresOpenaiAuth:true}});if(r.method==='model/list')out({jsonrpc:'2.0',id:r.id,result:{data:[{id:'gpt-5-codex',model:'gpt-5-codex'}],nextCursor:null}});if(r.method==='account/rateLimits/read')out({jsonrpc:'2.0',id:r.id,result:{rateLimits:{primary:{usedPercent:25,windowDurationMins:null,resetsAt:100},secondary:null}}});});
@@ -329,10 +329,16 @@ describe('observability', () => {
     stacked.addFakeAccount('healthy', ['gpt-5-codex']);
     server = await stacked.listen();
     port = (server.address() as { port: number }).port;
+    /** Pinned to a path that cannot exist, so the check reads the same here as on a machine without the Codex CLI. */
+    const savedCommand = process.env.PATTY_CODEX_COMMAND;
+    process.env.PATTY_CODEX_COMMAND = join(tmpdir(), 'patty-no-such-codex');
     const ready = await read(stacked, port);
+    savedCommand === undefined ? delete process.env.PATTY_CODEX_COMMAND : process.env.PATTY_CODEX_COMMAND = savedCommand;
+    /** A missing Codex CLI is reported, not fatal: `--fake` subs still make the daemon healthy. */
     expect(ready.data.ok).toBe(true);
-    expect(ready.data.checks.map(check => check.check)).toEqual(['subs_stacked', 'subs_servable', 'models_discovered', 'live_codex', 'active_keys', 'store_writable']);
-    expect(ready.data.checks.filter(check => check.hint !== undefined).map(check => check.check)).toEqual(['live_codex']);
+    expect(ready.data.checks.map(check => check.check)).toEqual(['subs_stacked', 'subs_servable', 'models_discovered', 'codex_cli', 'active_keys', 'store_writable']);
+    expect(ready.data.checks.find(check => check.check === 'codex_cli')).toMatchObject({ ok: false });
+    expect(ready.data.checks.filter(check => check.hint !== undefined).map(check => check.check)).toEqual(['codex_cli']);
   });
 });
 

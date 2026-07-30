@@ -92,9 +92,8 @@ PATTY_PORT=3211 node apps/daemon/dist/src/main.js --fake=sub-a --fake=sub-b:0.4
   `node:sqlite` error looks like a crash unrelated to the guard — check `node -v` before interpreting failures.
 
 ## Live Codex mode (real ChatGPT subs)
-Live mode is gated fail-closed by `PattyDaemon.liveCodexCommand()`: it returns a command only when
-`PATTY_ENABLE_LIVE_CODEX=1`, `PATTY_CODEX_VERSION=0.145.0`, `PATTY_CODEX_COMMAND` is set, and the file at
-`PATTY_AUTHORIZATION_EVIDENCE` hashes to `PATTY_AUTHORIZATION_SHA256`. A launcher script exporting those plus
+`PattyDaemon.liveCodexCommand()` returns `PATTY_CODEX_COMMAND` or plain `codex`; the adapter then refuses a binary that
+does not report `codex-cli 0.145.0`, so a wrong or missing CLI fails at `Add sub`, not at boot. A launcher script exporting that plus
 `PATTY_DB_PATH`/`PATTY_ACCOUNT_HOME_ROOT` (e.g. `run-patty-live.sh` writing to `~/.patty-live/`) is the practical way to
 run it; keep live state in its own DB/home root so fake-mode testing cannot clobber real logins.
 - **Never click `remove` on a live sub.** `removeAccount` calls `adapter.logout()` and `rmSync(home)` — it destroys the
@@ -230,6 +229,5 @@ run it; keep live state in its own DB/home root so fake-mode testing cannot clob
 ## Devin Secrets Needed
 - None for fake/`--fake` mode.
 - Live mode needs no Devin secret, but does need operator-supplied material that cannot be self-served: real logged-in
-  Codex account homes, the authorization-evidence file plus its `PATTY_AUTHORIZATION_SHA256`, and the daemon's
-  one-time `cp_live_…` API key. Ask for those (and for a live run budget) rather than attempting an `Add sub` login,
+  Codex account homes and the daemon's one-time `cp_live_…` API key. Ask for those (and for a live run budget) rather than attempting an `Add sub` login,
   which requires an interactive browser sign-in.

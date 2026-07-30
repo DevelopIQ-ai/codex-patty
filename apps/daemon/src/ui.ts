@@ -374,7 +374,7 @@ el('add').onclick = async () => {
     const challenge = await api('/v1/accounts/codex/login', { method: 'POST', body: JSON.stringify({ alias, mode: el('mode').value }) });
     el('login').innerHTML = 'finish login for <code>' + alias + '</code>: ' + (challenge.url ? '<a href="' + challenge.url + '" target="_blank" rel="noreferrer">open provider login</a>' : 'no url returned') + (challenge.code ? ' &middot; code <code>' + challenge.code + '</code>' : '');
     el('alias').value = '';
-  } catch (error) { el('login').className = 'err'; el('login').textContent = 'login failed: ' + error.message + ' (live mode requires the local authorization gate)'; }
+  } catch (error) { el('login').className = 'err'; el('login').textContent = 'login failed: ' + error.message + ' (adding a real sub needs the Codex CLI installed; run patty doctor)'; }
   await load();
 };
 

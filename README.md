@@ -1,18 +1,22 @@
 # Codex Patty
 
-**Stack all your Codex subscriptions on one machine and route every request to whichever one has headroom left.**
+**Put all your Codex subscriptions in one place, and let your tools use whichever one still has quota left.**
 
-Patty is a local, loopback-only daemon that holds several signed-in Codex/ChatGPT subscriptions ("subs"), picks one per request based on remaining quota, health and in-flight load, streams the answer back, and meters tokens in/out per sub using the provider's own counters. It ships a web console and a CLI. No cloud service, no proxy, no credential handling — each sub lives in its own isolated `CODEX_HOME` and only the official [Codex app-server](https://developers.openai.com/codex) protocol is used.
+If you pay for more than one ChatGPT/Codex plan, each one sits in its own window with its own limit, and you switch between them by hand. Patty is a small program you run on your own computer that signs into all of them, and hands every request to whichever subscription has the most left. When one runs out, the next one picks it up. You get one address and one password for the whole pile, so anything that already talks to OpenAI — the OpenAI libraries, Cursor, aider, your own app — can use it without changing a line of code.
+
+It also shows you where everything went: how much of each subscription you've used, when each one resets, how many tokens each request cost, and what that would have cost you at OpenAI's normal prices.
+
+Three things it does **not** do: it doesn't run in the cloud (it runs on your machine, and only your machine can reach it), it doesn't touch your passwords or login tokens (the official Codex program handles signing in, exactly as it does today), and it doesn't save your prompts or the answers anywhere.
 
 ![Codex Patty in 20 seconds: three stacked subs plus an API-credit fallback, the router explaining its choice, a request routed and answered, and tokens metered per sub](docs/images/demo.webp)
 
-<sub>Three fake subs and an API-credit fallback, live: quota windows, the router naming the winner and why, a request routed to `codex-work`, and its tokens metered. Reproduce it with `corepack pnpm demo`.</sub>
+<sub>Three pretend subscriptions and a spare API key, running for real: how much of each is left, Patty saying which one it picked and why, the answer coming back, and the tokens counted. Run it yourself with `corepack pnpm demo` — no subscription needed.</sub>
 
 ![Codex Patty console: three stacked subs, router scores, a streamed run and per-sub token metering](docs/images/console.png)
 
 ## Setup
 
-Hand this to your coding agent (Codex, Claude Code, Cursor, aider — anything with a shell). It sets Patty up, proves it works without touching a real account, and stops before anything that needs your hands.
+Copy the block below and give it to your coding agent (Codex, Claude Code, Cursor, aider — anything that can run commands). It will install Patty, check that it works using pretend subscriptions so none of your real ones are touched, and then stop and tell you the two steps only you can do.
 
 ````text
 Set up codex-patty (https://github.com/DevelopIQ-ai/codex-patty) on this machine for me.
@@ -36,41 +40,37 @@ Set up codex-patty (https://github.com/DevelopIQ-ai/codex-patty) on this machine
        OPENAI_API_KEY=<the cp_live_… key>
    and create a named key per consumer with `patty keys create <name>`.
 5. Then STOP and tell me these two things need me, because you cannot do them:
-   - Adding my real subscriptions: live mode is fail-closed and needs
-     PATTY_ENABLE_LIVE_CODEX=1, a pinned PATTY_CODEX_COMMAND/PATTY_CODEX_VERSION, and an
-     authorization-evidence file I write and attest to myself
-     (see docs/provider-authorization.md). Each sub then signs in through a browser.
+   - Adding my real subscriptions: each one signs in through a browser window, as me.
+     Check the Codex CLI is installed first (`codex --version`); `patty doctor` reports
+     whether Patty found it.
    - Keeping it running as a service, if I want that (docs/operations.md), or putting it
      on an always-on box for an app to use (docs/deploy.md).
 
-Rules: do not weaken the loopback default, do not create the authorization-evidence file
-on my behalf, and do not put any API key in a file you commit.
+Rules: do not weaken the loopback default, do not log into any account on my behalf, and
+do not put any API key in a file you commit.
 ````
 
-Doing it by hand is the same four lines: `npx codex-patty --fake=…` (or `corepack pnpm install && corepack pnpm demo` from a clone), open <http://127.0.0.1:3210/>, paste the printed key. `--fake=<alias>[:<quotaRemaining>[:<minutesUntilReset>]]` stacks fake subs, so routing, streaming and per-sub metering are all observable without touching a real account — that is exactly what the animation above shows.
+Prefer to do it yourself? It's two commands. Run `npx codex-patty --fake=work-sub:0.82 --fake=personal-sub:0.55`, then open <http://127.0.0.1:3210/> and paste in the key it printed. `--fake` makes up subscriptions that behave like real ones — you can watch it choose between them, stream an answer and count tokens without owning a single subscription. That is exactly what the animation above is.
 
 ## Use it with real subs
 
-Live mode is deliberately **fail-closed**: it starts only when you have attested locally that your OpenAI authorization covers running your own subscriptions this way, and only against the exact pinned `@openai/codex` version. See [docs/provider-authorization.md](docs/provider-authorization.md) for what that means and why.
+You need the [Codex CLI](https://developers.openai.com/codex) installed, because that is the thing Patty signs in and talks to. If `codex` is on your PATH there is nothing to configure:
 
 ```sh
-export PATTY_ENABLE_LIVE_CODEX=1
-export PATTY_CODEX_COMMAND=$PWD/node_modules/.bin/codex
-export PATTY_CODEX_VERSION=0.145.0
-export PATTY_AUTHORIZATION_EVIDENCE=$HOME/.patty/authorization.txt   # your own attestation file
-export PATTY_AUTHORIZATION_SHA256=$(sha256sum $HOME/.patty/authorization.txt | cut -d' ' -f1)
 npx codex-patty
 ```
 
-Then add each subscription from the console's **Add sub** box (or `patty accounts add <alias>`), sign in in the browser window Codex opens, and repeat per sub. Logins live in each sub's isolated `CODEX_HOME`, so they survive restarts — the daemon re-attaches a worker to every stored sub at boot and prints what it recovered:
+If it lives somewhere else, point at it with `PATTY_CODEX_COMMAND=/path/to/codex`. Patty checks the version before it starts a subscription and refuses one it wasn't built against, because that connection changes between Codex releases and a mismatch fails in confusing ways later. `patty doctor` tells you which Codex it found.
+
+Then add each subscription using the **Add sub** box on the web page (or `patty accounts add <name>`), and sign in in the browser window that Codex opens. Repeat for each one. Every subscription keeps its own login in its own private folder, so they stay signed in even if you restart the computer — on start-up Patty reconnects them and tells you which ones came back:
 
 ```
 {"listening":{"address":"127.0.0.1","port":3210},"restoredSubs":["work-sub","personal-sub"]}
 ```
 
-## Point any OpenAI client at your stack
+## Point any OpenAI app at it
 
-Patty speaks OpenAI's chat-completions API, so anything that talks to OpenAI can drive your stacked subs with two environment variables:
+Patty answers in exactly the same shape OpenAI does, so any program that already talks to OpenAI can talk to Patty instead. You change two settings and nothing else:
 
 ```sh
 export OPENAI_BASE_URL=http://127.0.0.1:3210/v1
@@ -84,21 +84,21 @@ print(client.chat.completions.create(model="gpt-5-codex",
       messages=[{"role": "user", "content": "hello"}]).choices[0].message.content)
 ```
 
-Streaming (`stream=True`) yields standard `chat.completion.chunk` events; `usage` on the final chunk carries the provider's own counts. Every response includes an `x-patty-sub` header naming the sub that served it, and `GET /v1/models` lists each model with the subs that can serve it. Requests here route, meter and fail over exactly like `/v1/runs`.
+Word-by-word streaming (`stream=True`) works the same way it does with OpenAI, and the last chunk tells you how many tokens the request used. Every answer carries a header called `x-patty-sub` naming which subscription actually served it, so you are never guessing.
 
-**Tool calling works** — pass `tools` and `tool_choice` as you would to OpenAI, and a turn that calls one comes back with `finish_reason: "tool_calls"`, `content: null` and the assembled `tool_calls` (streaming emits them in a delta first). Because tool calling is a provider capability rather than something Patty can fake, only subs whose provider honours it are eligible for such a request; if nothing stacked can serve the model with tools, you get a plain `400 model_unavailable` instead of a silently toolless answer. Tool calls are content, so they are never written to the store — only the fact that a call happened.
+**Tool calling works too.** (Tool calling is how an AI asks your code to run a function — look up the weather, search a database — instead of just replying with text. It is how Cursor and most AI agents work.) Send `tools` exactly as you would to OpenAI. Patty only sends such a request to a subscription that can genuinely handle tools; if none of yours can, it says so clearly instead of quietly giving you an answer that ignores your tools.
 
-Not yet supported: `n>1`, logprobs, and images.
+Not supported yet: asking for several answers at once (`n>1`), logprobs, and images.
 
 ## Install and keep it running
 
 ```sh
 npm i -g codex-patty     # or just use npx
-codex-patty              # starts the daemon (alias: pattyd)
-codex-patty usage        # any other argument is a CLI command (alias: patty)
+codex-patty              # with no arguments, starts Patty and leaves it running
+codex-patty usage        # with an argument, runs a command and prints the answer
 ```
 
-One dependency-free package ships the daemon, the CLI and the console. To keep it up, run it under your OS supervisor — it is a plain long-running Node process that only listens on loopback:
+One small package with no other packages inside it contains everything: the program, the command line tool, and the web page. It is meant to stay running in the background, so let your operating system start it for you and restart it if it ever stops:
 
 ```ini
 # ~/.config/systemd/user/codex-patty.service   →  systemctl --user enable --now codex-patty
@@ -110,26 +110,26 @@ Restart=on-failure
 WantedBy=default.target
 ```
 
-Patty listens on loopback only unless you explicitly opt in (`PATTY_ALLOW_NON_LOOPBACK=1` plus a specific `PATTY_HOST`; wildcards are always refused). On macOS use a launchd agent with the same command. Full details, including the live-mode variables a service needs, are in [docs/operations.md](docs/operations.md).
+**Only your own computer can reach Patty.** It listens on `127.0.0.1`, an address that never leaves the machine it is running on — not your phone on the same wifi, not anyone on the internet. That is on purpose: your subscriptions are worth money, and an open door would let a stranger spend them. If you do want another machine to reach it, you have to say so out loud with `PATTY_ALLOW_NON_LOOPBACK=1` and name one specific address; "let anyone in" is refused even then. On macOS use a launchd agent instead of the file above. The details are in [docs/operations.md](docs/operations.md).
 
-To run it on a box and point an app at it — one always-on machine, subs logged in over an SSH tunnel or device code, reachable over a tailnet or behind TLS — follow [docs/deploy.md](docs/deploy.md). Serverless platforms can't host Patty itself (each sub is a long-lived process with a logged-in home on disk), but they make perfectly good clients of it.
+Want it on a spare machine so an app can use it around the clock? [docs/deploy.md](docs/deploy.md) walks through it. It can't live on Vercel, Trigger.dev or similar, because each subscription is a program that has to stay signed in and running — but apps on those platforms can happily use a Patty running elsewhere.
 
 ## What it does
 
 | | |
 | --- | --- |
-| **Stacking** | Any number of Codex subs, plus any OpenAI-compatible endpoint (OpenAI, OpenRouter, Together, a local Ollama) via `POST /v1/accounts/openai-compatible` with the key referenced by env-var name, never stored. Any number of subs, each isolated in its own `CODEX_HOME`; add and remove them at runtime. |
-| **Routing** | Per-request selection on remaining quota, health, in-flight runs and model eligibility, under a short transactional lease so two requests can't grab the same slot. Quota is read as the rolling window it is: a sub whose window has already reset counts as full again, and headroom about to expire is preferred as use-it-or-lose-it. The console names the winner and why ("most headroom, 82% vs 55% vs 31%"), so a routing decision is never a black box. |
-| **Tiers** | Subs are `primary` (your stack) or `fallback` (metered API credit, the default for `POST /v1/accounts/openai-compatible`). Every eligible primary sub is exhausted before a fallback sub serves anything, and traffic returns to the stack the moment a quota window rolls over — so an API key is the safety net that keeps you answering when all ten subs are rate limited, not a competitor for their headroom. |
-| **Failover** | A sub that answers with a 429/usage-limit error is parked until its own reset and the run is retried on another eligible sub — including across into the fallback tier — before any output has streamed. |
-| **Streaming** | Runs stream over SSE with sequence IDs, heartbeats, replay for late subscribers, and cancellation by the provider's own turn ID. |
-| **Keys** | One named key per consumer (`patty keys create puffle-prod`), revocable independently, with usage attributed per key as well as per sub — so you can see what your prod app spent versus your laptop. |
-| **Limits** | Cap a key with `patty keys limit <id> <req/min> <concurrent>`, or in the console. A burst over the cap **waits in that key's queue** instead of failing, and only what still can't be served gets a `429` with `Retry-After` — so one app's traffic spike can't drain the stack or starve another key. Concurrency counts runs in flight, not sockets. |
-| **Metering** | Tokens in / cached in / out / reasoning out / total, per run and per sub, taken from the provider's `thread/tokenUsage/updated` telemetry rather than estimated. Latest snapshot per run wins, so repeated updates never double-count. |
-| **What it saved you** | Those counts priced in dollars: the console shows what the turns your subs served *would* have cost at API list price (money your subscriptions absorbed) next to what the fallback API subs actually spent. Dollars are the one estimated number, so a model with no local price is reported as unpriced, never as free — and `PATTY_PRICES=prices.json` lets you set your own rates. |
-| **Thread affinity** | Pin a conversation to the sub that started it so multi-turn context isn't lost to routing. |
-| **Console + CLI** | One static loopback page for humans; `patty accounts|models|usage|status|doctor` and a JSON API for everything else. |
-| **Privacy** | Prompts and outputs are never persisted — SQLite keeps aliases, quota snapshots, run metadata and token counts only. Patty never reads `auth.json`, moves OAuth tokens, or calls private endpoints. |
+| **Holds all your subscriptions** | As many Codex subscriptions as you like, each kept completely separate from the others, added or removed while it's running. You can also add a normal paid API key (OpenAI, OpenRouter, Together, or a model running on your own machine through Ollama) and it sits alongside them. Patty stores only the *name* of the environment variable your API key lives in — never the key itself — so its database is worthless if someone steals it. |
+| **Picks the right one** | For every request it looks at how much each subscription has left, whether it's healthy, how busy it is, and whether it can run the model you asked for. A subscription whose window has already reset counts as full again, and one that's about to reset gets used first, because that leftover quota disappears otherwise. The web page tells you the reason in plain words: "most headroom, 82% vs 55% vs 31%." |
+| **Keeps the paid API as a spare tyre** | Your subscriptions are used first, always. A paid API key is only touched when every subscription is out of quota — and traffic goes straight back to your subscriptions the moment one resets. So you keep answering during a dry spell without paying for anything you didn't have to. |
+| **Recovers from "you've hit your limit"** | If a subscription refuses a request because it's out of quota, Patty sets it aside until its reset time and quietly retries somewhere else. You see an answer, not an error. |
+| **Answers word by word** | Replies stream as they're written, they can be cancelled halfway, and if your browser reconnects it catches up on what it missed. |
+| **A separate password per app** | Give each app its own key (`patty keys create puffle-prod`), and you can turn one off without disturbing the others. Usage is counted per key, so you can see what your production app spent versus your laptop. |
+| **Stops one app hogging everything** | Set a limit per key — requests per minute, and how many at once. Traffic over the limit **waits its turn** instead of failing, and only requests that still can't be served are turned away. One app having a busy afternoon can't starve the others. |
+| **Counts every token** | Tokens in, tokens out, and the cheaper "cached" ones, per request and per subscription — taken from the provider's own numbers, not guessed. |
+| **Tells you what it saved you** | Those tokens shown in dollars: what your subscriptions absorbed (what the same work would have cost at OpenAI's list prices) next to what you actually spent on paid API calls. Dollars are the one estimated figure, so a model Patty has no price for is labelled "unpriced" rather than pretending it was free. You can set your own prices. |
+| **Keeps a conversation together** | A multi-turn conversation can be pinned to the subscription that started it, so it doesn't lose track of what you were talking about. |
+| **A web page and a command line** | A simple page for looking at things; `patty accounts`, `models`, `usage`, `status` and `doctor` for the terminal. |
+| **Keeps your content out of it** | Your prompts, the answers, and any tool names or arguments are never written to disk or into the logs. The database holds nicknames, quota numbers, timestamps and token counts — nothing you typed. Patty never reads your login file or moves your tokens around. |
 
 ## Layout
 
@@ -140,7 +140,7 @@ packages/contracts        shared types + OpenAPI description
 packages/codex-protocol   schemas generated from the official app-server protocol
 ```
 
-Read [architecture](docs/architecture.md) for the design decisions, [api](docs/api.md) for the HTTP surface, [operations](docs/operations.md) for running it, and [security](docs/security.md) for the boundary.
+[architecture](docs/architecture.md) explains why it's built this way, [api](docs/api.md) lists every request you can make, [operations](docs/operations.md) covers running it day to day, and [security](docs/security.md) says exactly what is and isn't protected.
 
 ## Development
 
@@ -149,6 +149,6 @@ corepack pnpm lint && corepack pnpm typecheck && corepack pnpm openapi:lint
 corepack pnpm test:unit && corepack pnpm test:contract && corepack pnpm test:integration && corepack pnpm test:e2e:fake
 ```
 
-Node >=22.5 is required (the store uses `node:sqlite`). Contract tests run against fixtures generated from the official 0.145.0 protocol schemas, so they fail loudly when Patty drifts from the provider's shapes. `test:live` is opt-in and needs real subs plus the authorization gate above.
+You need Node 22.5 or newer, because Patty uses the database that's built into Node itself. Most of the tests run against recordings of the real Codex protocol, so they complain loudly the day Patty stops matching it. Only `test:live` needs real subscriptions, and it never runs unless you ask for it.
 
-Issues and PRs welcome — especially routing strategies, cost views, and adapters. MIT licensed.
+Issues and pull requests are welcome — read [CONTRIBUTING.md](CONTRIBUTING.md) first. MIT licensed.

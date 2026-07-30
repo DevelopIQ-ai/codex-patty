@@ -1,18 +1,16 @@
-import { createHash } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const version = '0.145.0';
-const required = ['PATTY_LIVE_TESTS', 'PATTY_ENABLE_LIVE_CODEX', 'PATTY_AUTHORIZATION_EVIDENCE', 'PATTY_AUTHORIZATION_SHA256', 'PATTY_CODEX_COMMAND', 'PATTY_CODEX_VERSION', 'PATTY_LIVE_ACCOUNT_ROOT'];
+const required = ['PATTY_LIVE_TESTS', 'PATTY_CODEX_COMMAND', 'PATTY_CODEX_VERSION', 'PATTY_LIVE_ACCOUNT_ROOT'];
 class LiveBlockedError extends Error {}
 const blocked = message => { console.error(`BLOCKED: ${message}`); process.exit(2); };
 const bounded = (promise, ms, label) => new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error(`${label}_timeout`)), ms); promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); }); });
 const privateDirectory = path => { mkdirSync(path, { recursive: true, mode: 0o700 }); const entry = lstatSync(path); if (!entry.isDirectory() || entry.isSymbolicLink() || (typeof process.getuid === 'function' && entry.uid !== process.getuid())) blocked('account root must be an owner-only non-symlink directory'); chmodSync(path, 0o700); return resolve(path); };
 for (const key of required) if (!process.env[key]) blocked(`missing ${key}`);
-if (process.env.PATTY_LIVE_TESTS !== '1' || process.env.PATTY_ENABLE_LIVE_CODEX !== '1') blocked('explicit test and live enablement are both required');
+if (process.env.PATTY_LIVE_TESTS !== '1') blocked('live tests spend real quota and must be asked for explicitly');
 if (process.env.PATTY_CODEX_VERSION !== version) blocked(`PATTY_CODEX_VERSION must be ${version}`);
-if (!existsSync(process.env.PATTY_AUTHORIZATION_EVIDENCE) || createHash('sha256').update(readFileSync(process.env.PATTY_AUTHORIZATION_EVIDENCE)).digest('hex') !== process.env.PATTY_AUTHORIZATION_SHA256) blocked('local authorization attestation path and digest do not match');
 try { if (execFileSync(process.env.PATTY_CODEX_COMMAND, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() !== `codex-cli ${version}`) blocked('configured Codex command is not the exact pinned version'); } catch { blocked('configured Codex command cannot be version-checked'); }
 
 const root = privateDirectory(process.env.PATTY_LIVE_ACCOUNT_ROOT);

@@ -1,10 +1,10 @@
 # Operations
 
-Install with `corepack pnpm install`. Run `corepack pnpm lint`, `typecheck`, `test:unit`, `test:contract`, `test:integration`, and `test:e2e:fake` before use. `test:live` remains **blocked** unless explicit enablement, `PATTY_LIVE_TESTS=1`, the private local attestation path and digest, the exact 0.145.0 command, and its exact version are all present.
+Install with `corepack pnpm install`. Run `corepack pnpm lint`, `typecheck`, `test:unit`, `test:contract`, `test:integration`, and `test:e2e:fake` before use. `test:live` runs only with `PATTY_LIVE_TESTS=1`, the exact 0.145.0 Codex command and a live account root, because it spends real quota.
 
 For a safe demo, build and run `node apps/daemon/dist/src/main.js --fake=sub-a --fake=sub-b:0.4` and open the console at <http://127.0.0.1:3210/>; repeat `--fake=<alias>[:<quotaRemaining>]` per demo sub. It prints a `cp_live` key only when its database has no active key; save that one-time value with `patty init <key>`, which writes an owner-only local config fallback. The daemon binds only to loopback. Its default `.patty/` directory is created mode 0700. An explicit `PATTY_DB_PATH` is owned by the operator and Patty never changes permissions on its parent.
 
-The Codex account lifecycle is deliberately disabled unless `PATTY_ENABLE_LIVE_CODEX=1`, `PATTY_CODEX_VERSION` is an exact tested version, and the provider authorization gate has been satisfied. When enabled, account add starts one app-server per opaque alias in an isolated home and uses documented stdio login, snapshot, logout, and shutdown operations. The live harness resumes two existing isolated homes when possible; it only performs an interactive device-code login for homes that are not already authenticated. It then reads account/model/rate-limit state and runs two account-pinned turns plus one unpinned Patty-routed turn without logging prompts, tokens, or account emails. Live test evidence is currently pending.
+Adding a Codex account needs the Codex CLI on PATH or in `PATTY_CODEX_COMMAND`, and the adapter verifies it reports the exact tested version before starting. Account add starts one app-server per opaque alias in an isolated home and uses documented stdio login, snapshot, logout, and shutdown operations. The live harness resumes two existing isolated homes when possible; it only performs an interactive device-code login for homes that are not already authenticated. It then reads account/model/rate-limit state and runs two account-pinned turns plus one unpinned Patty-routed turn without logging prompts, tokens, or account emails. Live test evidence is currently pending.
 
 ## Live account homes
 
@@ -16,7 +16,7 @@ Codex itself may persist its managed credentials in each isolated `CODEX_HOME` s
 
 The launcher dispatches on its first argument: absent, `start`, `up` or a `--flag` starts the daemon; anything else is a CLI command. `pattyd` and `patty` remain available as direct bins.
 
-Under a service manager, the daemon needs only `PATTY_DB_PATH` (and, for live subs, the same live-mode variables listed above, including the authorization evidence path and digest — a service that lacks them starts in fake/offline mode by design rather than silently bypassing the gate). Use `Restart=on-failure`; the store reconciles in-flight runs transactionally at boot, so an abrupt restart cannot leave a sub with phantom active runs.
+Under a service manager, the daemon needs only `PATTY_DB_PATH`, plus `PATTY_CODEX_COMMAND` when the Codex CLI is not on the service user's PATH. Use `Restart=on-failure`; the store reconciles in-flight runs transactionally at boot, so an abrupt restart cannot leave a sub with phantom active runs.
 
 ## Binding beyond loopback
 
