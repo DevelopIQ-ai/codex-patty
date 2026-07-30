@@ -10,7 +10,7 @@ class ControlledAdapter implements ProviderAdapter {
   complete() { this.onEvent?.({ version: 1, type: 'completed', runId: this.turnId }); } async approve() {} async logout() {} async health() { return true; } async shutdown() {}
 }
 describe('state and deterministic routing', () => {
-  it('stores only a derived key hash and revocation disables a key', () => { const store = new Store(); const issued = store.issueKey(); const key = issued.key; expect(store.verifyKey(key)).toBe(true); const row = store.db.prepare('SELECT id,hash FROM api_keys').get() as { id: string; hash: string }; expect(row.hash).not.toBe(key); expect(row.hash).toMatch(/^[a-f0-9]{64}$/); store.revokeKey(row.id); expect(store.verifyKey(key)).toBe(false); });
+  it('stores only a derived key hash and revocation disables a key', () => { const store = new Store(); const issued = store.issueKey(); const key = issued.key; expect(store.verifyKey(key)?.id).toBe(issued.id); const row = store.db.prepare('SELECT id,hash FROM api_keys').get() as { id: string; hash: string }; expect(row.hash).not.toBe(key); expect(row.hash).toMatch(/^[a-f0-9]{64}$/); store.revokeKey(row.id); expect(store.verifyKey(key)).toBeUndefined(); });
   it('filters exact models, cooldowns, exhausted quota, and capacity', () => { const a = account('a'); expect(eligible(a, { model: 'gpt-5-codex', input: '' })).toBe(true); expect(eligible(a, { model: 'other', input: '' })).toBe(false); a.quota.remaining = 0; expect(eligible(a, { model: 'gpt-5-codex', input: '' })).toBe(false); a.quota.remaining = 1; a.cooldownUntil = '2099-01-01T00:00:00Z'; expect(eligible(a, { model: 'gpt-5-codex', input: '' })).toBe(false); });
   it('selects quota headroom deterministically and leases once', () => { const store = new Store(); const low = account('low', .1); const high = account('high', .9); store.addAccount(low); store.addAccount(high); const router = new Router(store); expect(score(high, 'seed')).toBeGreaterThan(score(low, 'seed')); const selected = router.choose({ model: 'gpt-5-codex', input: '' }, 'seed'); expect(selected.id).toBe('high'); expect(store.acquireLease('high', 'other')).toBe(false); });
   it('releases the selection lease after active-run accounting, allowing configured concurrency', async () => { const store = new Store(); const a = account('a'); store.addAccount(a); const c = new Coordinator(store, new Router(store), new Map([[a.id, new ControlledAdapter()]])); await c.start({ model: 'gpt-5-codex', input: 'one' }); await c.start({ model: 'gpt-5-codex', input: 'two' }); expect(store.account(a.id)?.activeRuns).toBe(2); expect(store.acquireLease(a.id, 'probe')).toBe(true); await expect(c.start({ model: 'gpt-5-codex', input: 'three' })).rejects.toThrow('no_eligible_account'); });
@@ -20,7 +20,7 @@ describe('state and deterministic routing', () => {
 });
 
 describe('persistent bootstrap state', () => {
-  it('issues a bootstrap key once for an existing database', () => { const path = `/tmp/patty-${Date.now()}-${Math.random()}.sqlite`; const first = new Store(path); const key = first.issueKey().key; const second = new Store(path); expect(second.hasActiveKey()).toBe(true); expect(second.verifyKey(key)).toBe(true); });
+  it('issues a bootstrap key once for an existing database', () => { const path = `/tmp/patty-${Date.now()}-${Math.random()}.sqlite`; const first = new Store(path); const key = first.issueKey().key; const second = new Store(path); expect(second.hasActiveKey()).toBe(true); expect(second.verifyKey(key)).toBeTruthy(); });
 });
 
 it('reconciles persisted in-flight work transactionally at startup', () => { const store = new Store(); const a = account('recover'); store.addAccount({ ...a, activeRuns: 1, state: 'ready' }); store.createRun({ id: 'run_recover', accountId: a.id, fingerprint: 'f', status: 'running', outputStarted: false, cancelRequested: false }); store.reconcileWorkers(); expect(store.account(a.id)?.activeRuns).toBe(0); expect(store.account(a.id)?.state).toBe('reconnect_required'); expect(store.publicRun('run_recover')?.status).toBe('cancelled'); });
@@ -33,7 +33,7 @@ it('enforces persisted exact capabilities', () => { const store=new Store(); con
 
 it('persists normalized started and delta events for late replay', async () => { const store=new Store();const a=account('events');store.addAccount(a);const c=new Coordinator(store,new Router(store),new Map([[a.id,new FakeAdapter()]]));const run=await c.start({model:'gpt-5-codex',input:'x'});await wait();expect(c.eventItems(run).map(item=>item.event.type)).toEqual(['started','delta','usage','completed']); });
 it('deletes dependent account metadata before account rollback', () => { const store=new Store();const a=account('rollback');store.addAccount(a);store.createRun({id:'r',accountId:a.id,fingerprint:'x',status:'running',outputStarted:false,cancelRequested:false});store.setCapabilities(a.id,['shell']);store.deleteAccountCascade(a.id);expect(store.account(a.id)).toBeUndefined();expect(store.run('r')).toBeUndefined(); });
-it('upgrades an unversioned accounts schema before migration versions are recorded', () => { const path=`/tmp/patty-legacy-${Date.now()}.sqlite`; const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(path);db.exec("CREATE TABLE accounts(id TEXT PRIMARY KEY,alias TEXT,state TEXT,models TEXT,quota TEXT,health REAL,active_runs INTEGER,cooldown_until TEXT); CREATE TABLE api_keys(id TEXT PRIMARY KEY,prefix TEXT,hash TEXT,revoked_at TEXT,last_used_at TEXT,created_at TEXT); CREATE TABLE runs(id TEXT PRIMARY KEY,account_id TEXT,thread_id TEXT,fingerprint TEXT,idempotency_key TEXT,status TEXT,created_at TEXT); CREATE TABLE routing_leases(account_id TEXT PRIMARY KEY,run_id TEXT,expires_at TEXT);");db.close();const upgraded=new Store(path);const columns=upgraded.db.prepare('PRAGMA table_info(accounts)').all() as {name:string}[];expect(columns.some(c=>c.name==='home_ref')).toBe(true);expect(upgraded.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toMatchObject({n:4}); });
+it('upgrades an unversioned accounts schema before migration versions are recorded', () => { const path=`/tmp/patty-legacy-${Date.now()}.sqlite`; const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(path);db.exec("CREATE TABLE accounts(id TEXT PRIMARY KEY,alias TEXT,state TEXT,models TEXT,quota TEXT,health REAL,active_runs INTEGER,cooldown_until TEXT); CREATE TABLE api_keys(id TEXT PRIMARY KEY,prefix TEXT,hash TEXT,revoked_at TEXT,last_used_at TEXT,created_at TEXT); CREATE TABLE runs(id TEXT PRIMARY KEY,account_id TEXT,thread_id TEXT,fingerprint TEXT,idempotency_key TEXT,status TEXT,created_at TEXT); CREATE TABLE routing_leases(account_id TEXT PRIMARY KEY,run_id TEXT,expires_at TEXT);");db.close();const upgraded=new Store(path);const columns=upgraded.db.prepare('PRAGMA table_info(accounts)').all() as {name:string}[];expect(columns.some(c=>c.name==='home_ref')).toBe(true);expect(upgraded.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toMatchObject({n:5}); });
 
 it('fails over once before output and records an alternate attempt', async () => { const store=new Store();const first=account('first');const second=account('second');store.addAccount(first);store.addAccount(second);const failing:ProviderAdapter={login:async()=>({}),cancelLogin:async()=>{},snapshot:async()=>({models:[],quota:{observedAt:now()}}),createThread:async(_model:string)=>'',run:async()=>{throw new Error('early')},interrupt:async()=>{},approve:async()=>{},logout:async()=>{},health:async()=>true,shutdown:async()=>{}};const c=new Coordinator(store,new Router(store),new Map([[first.id,failing],[second.id,new FakeAdapter()]]));const run=await c.start({model:'gpt-5-codex',input:'x',accountId:first.id});await new Promise(resolve=>setTimeout(resolve,10));expect(store.publicRun(run)?.status).toBe('completed');expect((store.db.prepare('SELECT COUNT(*) AS n FROM run_attempts WHERE run_id=?').get(run) as {n:number}).n).toBe(2); });
 
@@ -45,7 +45,7 @@ it('publishes exactly one local started event when a real adapter also emits pro
 
 it('aggregates token usage per sub and keeps only the latest snapshot for a run', async () => { const store=new Store();const first=account('metered-a');const second=account('metered-b');store.addAccount(first);store.addAccount(second);const coordinator=new Coordinator(store,new Router(store),new Map([[first.id,new FakeAdapter()],[second.id,new FakeAdapter()]]));const runs=[await coordinator.start({model:'gpt-5-codex',input:'one two three',accountId:first.id}),await coordinator.start({model:'gpt-5-codex',input:'four',accountId:second.id})];await wait();const report=store.usageReport();expect(report.totals.runs).toBe(2);expect(report.totals.totalTokens).toBe(report.accounts.reduce((sum,item)=>sum+item.totalTokens,0));expect(report.accounts.map(item=>item.alias).sort()).toEqual(['metered-a','metered-b']);expect(report.runs.map(item=>item.runId).sort()).toEqual([...runs].sort());store.recordUsage(runs[0]!,first.id,'gpt-5-codex',{inputTokens:10,cachedInputTokens:1,outputTokens:2,reasoningOutputTokens:3,totalTokens:12});const rerecorded=store.usageReport();expect(rerecorded.totals.runs).toBe(2);expect(rerecorded.runs.find(item=>item.runId===runs[0])?.totalTokens).toBe(12); });
 
-it('reports zeroed usage totals before any run is measured', () => { const report=new Store().usageReport();expect(report).toEqual({totals:{inputTokens:0,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:0,runs:0},accounts:[],runs:[]}); });
+it('reports zeroed usage totals before any run is measured', () => { const report=new Store().usageReport();expect(report).toEqual({totals:{inputTokens:0,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:0,runs:0},accounts:[],keys:[],runs:[]}); });
 
 it('persists token counts but never output text for usage events', async () => { const store=new Store();const a=account('usage-events');store.addAccount(a);const coordinator=new Coordinator(store,new Router(store),new Map([[a.id,new FakeAdapter()]]));const run=await coordinator.start({model:'gpt-5-codex',input:'measure me'});await wait();const usage=coordinator.events(run).find(event=>event.type==='usage');expect(usage?.data).toMatchObject({inputTokens:expect.any(Number),outputTokens:expect.any(Number)});expect(JSON.stringify(usage?.data)).not.toContain('measure me'); });
 
@@ -103,5 +103,49 @@ describe('quota windows', () => {
     const parked = Date.parse(store.exhaustQuota('burned')!);
     expect(parked - Date.now()).toBeGreaterThan(14 * 60_000);
     expect(parked - Date.now()).toBeLessThanOrEqual(15 * 60_000);
+  });
+});
+
+describe('named keys and per-key attribution', () => {
+  it('names keys, keeps the secret shown once, and revokes independently', () => {
+    const store = new Store();
+    const prod = store.issueKey('puffle-prod');
+    const dev = store.issueKey('puffle-dev');
+    expect(store.verifyKey(prod.key)).toMatchObject({ id: prod.id, name: 'puffle-prod' });
+    store.revokeKey(prod.id);
+    expect(store.verifyKey(prod.key)).toBeUndefined();
+    expect(store.verifyKey(dev.key)).toMatchObject({ name: 'puffle-dev' });
+    const listed = store.keys();
+    expect(listed.map(entry => entry.name)).toEqual(['puffle-prod', 'puffle-dev']);
+    expect(listed.every(entry => !JSON.stringify(entry).includes(prod.key.split('_').at(-1)!))).toBe(true);
+  });
+
+  it('attributes a run usage to the key that started it, and leaves keyless runs honest', async () => {
+    const store = new Store();
+    const a = account('attributed');
+    store.addAccount(a);
+    const coordinator = new Coordinator(store, new Router(store), new Map([[a.id, new FakeAdapter()]]));
+    const prod = store.issueKey('puffle-prod');
+    await coordinator.start({ model: 'gpt-5-codex', input: 'billed to prod' }, prod.id);
+    await coordinator.start({ model: 'gpt-5-codex', input: 'billed to nobody' });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const report = store.usageReport();
+    expect(report.keys).toHaveLength(2);
+    expect(report.keys.find(entry => entry.keyId === prod.id)).toMatchObject({ name: 'puffle-prod', runs: 1 });
+    expect(report.keys.find(entry => entry.keyId === null)).toMatchObject({ name: null, runs: 1 });
+    expect(report.totals.runs).toBe(2);
+    expect(report.runs.filter(run => run.keyName === 'puffle-prod')).toHaveLength(1);
+  });
+
+  it('keeps usage attributed after the key is revoked, since history should not rewrite itself', async () => {
+    const store = new Store();
+    const a = account('after-revoke');
+    store.addAccount(a);
+    const coordinator = new Coordinator(store, new Router(store), new Map([[a.id, new FakeAdapter()]]));
+    const key = store.issueKey('short-lived');
+    await coordinator.start({ model: 'gpt-5-codex', input: 'one run' }, key.id);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    store.revokeKey(key.id);
+    expect(store.usageReport().keys).toMatchObject([{ keyId: key.id, name: 'short-lived', runs: 1 }]);
   });
 });

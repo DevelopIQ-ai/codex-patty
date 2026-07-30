@@ -64,7 +64,9 @@ paths:
         '400': {description: Invalid request}
         '502': {description: Upstream run failed or was cancelled}
   /v1/router/status: { get: { security: [{PattyKey: []}], responses: {'200': {description: Router status}} } }
-  /v1/api-keys: { post: { security: [{PattyKey: []}], responses: {'201': {description: Issued key}} } }
+  /v1/api-keys:
+    get: { security: [{PattyKey: []}], responses: {'200': {description: 'Issued keys with name, prefix, creation, last use and revocation state; never the secret'}} }
+    post: { security: [{PattyKey: []}], requestBody: {required: false, content: {application/json: {schema: {type: object, properties: {name: {type: string, description: 'Human label, e.g. puffle-prod'}}}}}}, responses: {'201': {description: 'Issued key; the secret is returned once and never again'}} }
   /v1/api-keys/{id}: { delete: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/KeyId'}], responses: {'204': {description: Revoked}} } }
   /v1/accounts: { get: { security: [{PattyKey: []}], responses: {'200': {description: Accounts}} } }
   /v1/accounts/codex/login: { post: { security: [{PattyKey: []}], responses: {'202': {description: Login challenge}} } }

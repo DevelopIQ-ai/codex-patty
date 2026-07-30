@@ -8,8 +8,9 @@ export type PattyEvent = { version: 1; type: 'started' | 'delta' | 'usage' | 'ap
 export type TokenUsage = { inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; totalTokens: number };
 export type UsageTotals = TokenUsage & { runs: number };
 export type AccountUsage = UsageTotals & { accountId: string; alias: string };
-export type RunUsage = TokenUsage & { runId: string; accountId: string; alias: string; model: string; observedAt: string };
-export type UsageReport = { totals: UsageTotals; accounts: AccountUsage[]; runs: RunUsage[] };
+export type RunUsage = TokenUsage & { runId: string; accountId: string; alias: string; model: string; observedAt: string; keyId: string | null; keyName: string | null };
+export type KeyUsage = UsageTotals & { keyId: string | null; name: string | null; prefix: string | null };
+export type UsageReport = { totals: UsageTotals; accounts: AccountUsage[]; keys: KeyUsage[]; runs: RunUsage[] };
 export type PattyErrorCode = 'invalid_request' | 'unauthorized' | 'idempotency_conflict' | 'no_eligible_account' | 'model_unavailable' | 'account_reconnect_required' | 'account_cooldown' | 'approval_timeout' | 'upstream_overloaded' | 'upstream_failed' | 'protocol_incompatible';
 export type PattyError = { error: { code: PattyErrorCode; message: string; requestId: string; retryable: boolean; retryAfterMs?: number } };
 

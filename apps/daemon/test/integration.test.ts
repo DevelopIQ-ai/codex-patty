@@ -189,3 +189,40 @@ describe('router status', () => {
     expect(body.data).toMatchObject([{ alias: 'only-codex', ready: true, eligible: false }]);
   });
 });
+
+describe('multiple API keys', () => {
+  it('issues named keys, attributes usage to the caller, and revokes one without affecting the other', async () => {
+    const daemon = new PattyDaemon();
+    daemon.addFakeAccount('shared', ['gpt-5-codex']);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const bootstrap = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    const issue = async (name: string) => await (await fetch(`http://127.0.0.1:${port}/v1/api-keys`, { method: 'POST', headers: bootstrap, body: JSON.stringify({ name }) })).json() as { id: string; name: string; key: string; warning: string };
+    const prod = await issue('puffle-prod');
+    const dev = await issue('puffle-dev');
+    expect(prod).toMatchObject({ name: 'puffle-prod', warning: 'secret shown once; store it securely' });
+    const complete = async (key: string, content: string) => await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content }] }) });
+    expect((await complete(prod.key, 'from prod')).status).toBe(200);
+    expect((await complete(prod.key, 'from prod again')).status).toBe(200);
+    expect((await complete(dev.key, 'from dev')).status).toBe(200);
+    const usage = await (await fetch(`http://127.0.0.1:${port}/v1/usage`, { headers: bootstrap })).json() as { data: { keys: { keyId: string; name: string; runs: number }[] } };
+    expect(usage.data.keys).toMatchObject([{ keyId: prod.id, name: 'puffle-prod', runs: 2 }, { keyId: dev.id, name: 'puffle-dev', runs: 1 }]);
+    expect((await fetch(`http://127.0.0.1:${port}/v1/api-keys/${prod.id}`, { method: 'DELETE', headers: bootstrap })).status).toBe(204);
+    expect((await complete(prod.key, 'revoked')).status).toBe(401);
+    expect((await complete(dev.key, 'still fine')).status).toBe(200);
+  });
+
+  it('lists keys with their state and never re-exposes a secret', async () => {
+    const daemon = new PattyDaemon();
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    const issued = await (await fetch(`http://127.0.0.1:${port}/v1/api-keys`, { method: 'POST', headers, body: JSON.stringify({ name: 'ci' }) })).json() as { id: string; key: string };
+    await fetch(`http://127.0.0.1:${port}/v1/api-keys/${issued.id}`, { method: 'DELETE', headers });
+    const listed = await (await fetch(`http://127.0.0.1:${port}/v1/api-keys`, { headers })).json() as { data: { id: string; name: string | null; prefix: string; revoked_at: string | null }[] };
+    const ci = listed.data.find(entry => entry.id === issued.id);
+    expect(ci).toMatchObject({ name: 'ci' });
+    expect(ci?.revoked_at).not.toBeNull();
+    expect(JSON.stringify(listed)).not.toContain(issued.key.split('_').at(-1));
+  });
+});

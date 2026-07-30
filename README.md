@@ -41,7 +41,7 @@ Patty speaks OpenAI's chat-completions API, so anything that talks to OpenAI can
 
 ```sh
 export OPENAI_BASE_URL=http://127.0.0.1:3210/v1
-export OPENAI_API_KEY=cp_live_...        # the key the daemon printed
+export OPENAI_API_KEY=cp_live_...        # a key from `patty keys create puffle-prod`
 ```
 
 ```python
@@ -63,6 +63,7 @@ Not yet supported: tool/function calling, `n>1`, logprobs, and images.
 | **Routing** | Per-request selection on remaining quota, health, in-flight runs and model eligibility, under a short transactional lease so two requests can't grab the same slot. Quota is read as the rolling window it is: a sub whose window has already reset counts as full again, and headroom about to expire is preferred as use-it-or-lose-it. The console names the winner and why ("most headroom, 82% vs 55% vs 31%"), so a routing decision is never a black box. |
 | **Failover** | A sub that answers with a 429/usage-limit error is parked until its own reset and the run is retried on another eligible sub, before any output has streamed. |
 | **Streaming** | Runs stream over SSE with sequence IDs, heartbeats, replay for late subscribers, and cancellation by the provider's own turn ID. |
+| **Keys** | One named key per consumer (`patty keys create puffle-prod`), revocable independently, with usage attributed per key as well as per sub — so you can see what your prod app spent versus your laptop. |
 | **Metering** | Tokens in / cached in / out / reasoning out / total, per run and per sub, taken from the provider's `thread/tokenUsage/updated` telemetry rather than estimated. Latest snapshot per run wins, so repeated updates never double-count. |
 | **Thread affinity** | Pin a conversation to the sub that started it so multi-turn context isn't lost to routing. |
 | **Console + CLI** | One static loopback page for humans; `patty accounts|models|usage|status|doctor` and a JSON API for everything else. |

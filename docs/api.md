@@ -24,6 +24,12 @@ Quota is a rolling window, so Patty reads it as one:
 
 When a provider rejects a turn with a rate-limit/usage-limit/429 error before any output, Patty marks that sub's quota exhausted, parks it until its own `resetAt` (or 15 minutes if the provider never reported one), and retries the run once on another eligible sub. The attempt is recorded with reason `quota_failover`, so `run_attempts` shows where a request actually ran. If nothing else is eligible the run fails as `quota_exhausted`. Once output has started, Patty does not fail over — replaying a partially streamed answer on another sub would corrupt it.
 
+## API keys and attribution
+
+`POST /v1/api-keys {"name":"puffle-prod"}` issues a named key and returns the secret **once**; `GET /v1/api-keys` lists id, name, prefix, creation, last use and revocation state but never the secret; `DELETE /v1/api-keys/{id}` revokes one key without touching the others. Give every consumer its own key (`puffle-prod`, `puffle-dev`, a laptop, a CI job) and revocation stays surgical.
+
+Every run records the key that started it, and usage inherits that attribution from the run, so `GET /v1/usage` reports totals per key as well as per sub. Attribution survives revocation — history should not rewrite itself — and runs made before named keys existed report `keyId: null`, labelled `unattributed` rather than silently folded into a real key.
+
 ## Usage metering
 
 `GET /v1/usage` returns token totals, per-sub aggregates, and the most recent measured runs. Patty persists only provider-reported counts (input, cached input, output, reasoning output, total) keyed by run, sub, and model — never prompts or generated text. A run's row is replaced by each newer provider snapshot, so totals stay exact when a turn reports usage more than once.
