@@ -74,6 +74,12 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
       <div class="card"><div class="k">Reasoning out</div><div class="v" id="t-reasoning">0</div></div>
       <div class="card"><div class="k">Runs measured</div><div class="v" id="t-runs">0</div></div>
     </div>
+    <div class="cards" style="margin-top:10px">
+      <div class="card"><div class="k">Absorbed by your subs</div><div class="v" id="t-saved">$0.00</div></div>
+      <div class="card"><div class="k">Spent on API fallback</div><div class="v" id="t-api">$0.00</div></div>
+      <div class="card"><div class="k">Estimated total</div><div class="v" id="t-cost">$0.00</div></div>
+    </div>
+    <p class="muted" id="cost-note"></p>
   </section>
 
   <section>
@@ -126,12 +132,13 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 
   <section class="wide">
     <h2>Usage per key</h2>
-    <table><thead><tr><th>Key</th><th>Runs</th><th>Tokens in</th><th>Tokens out</th><th>Total</th></tr></thead><tbody id="per-key"><tr><td colspan="5" class="muted">no usage recorded yet</td></tr></tbody></table>
+    <table><thead><tr><th>Key</th><th>Runs</th><th>Tokens in</th><th>Tokens out</th><th>Total</th><th>Est. cost</th></tr></thead><tbody id="per-key"><tr><td colspan="6" class="muted">no usage recorded yet</td></tr></tbody></table>
   </section>
 
   <section class="wide">
     <h2>Usage per sub</h2>
-    <table><thead><tr><th>Alias</th><th>Runs</th><th>Tokens in</th><th>Tokens out</th><th>Total</th><th style="width:32%">Share</th></tr></thead><tbody id="per-account"><tr><td colspan="6" class="muted">no usage recorded yet</td></tr></tbody></table>
+    <table><thead><tr><th>Alias</th><th>Tier</th><th>Runs</th><th>Tokens in</th><th>Tokens out</th><th>Total</th><th>Est. cost</th><th style="width:26%">Share</th></tr></thead><tbody id="per-account"><tr><td colspan="8" class="muted">no usage recorded yet</td></tr></tbody></table>
+    <p class="muted">A <code>primary</code> sub's cost is what those turns would have cost at API list price — your subscription absorbed it. A <code>fallback</code> sub's cost is real spend.</p>
   </section>
 
   <section class="wide">
@@ -227,13 +234,23 @@ function renderUsage(report) {
   el('t-cached').textContent = fmt(report.totals.cachedInputTokens);
   el('t-reasoning').textContent = fmt(report.totals.reasoningOutputTokens);
   el('t-runs').textContent = fmt(report.totals.runs);
+  el('t-saved').textContent = usd(report.cost.subscriptionUsd);
+  el('t-api').textContent = usd(report.cost.apiUsd);
+  el('t-cost').textContent = usd(report.cost.estimatedCostUsd);
+  /** Dollars are the one estimated number here, and a model with no price is excluded rather than counted as free, so both caveats are stated where the numbers are read. */
+  el('cost-note').textContent = 'Estimated from the providers\u2019 own token counts at local list prices (override with PATTY_PRICES). '
+    + (report.cost.unpricedRuns ? report.cost.unpricedRuns + ' run(s) are unpriced: no price for ' + report.cost.unpricedModels.join(', ') + '.' : 'Every measured run is priced.');
   const max = Math.max(1, ...report.accounts.map(account => account.totalTokens));
   el('per-account').innerHTML = report.accounts.length ? report.accounts.map(account => \`<tr>
-    <td><code>\${account.alias}</code></td><td>\${fmt(account.runs)}</td><td>\${fmt(account.inputTokens)}</td><td>\${fmt(account.outputTokens)}</td><td>\${fmt(account.totalTokens)}</td>
-    <td><div class="bar"><i style="width:\${Math.round((account.totalTokens / max) * 100)}%"></i></div></td></tr>\`).join('') : '<tr><td colspan="6" class="muted">no usage recorded yet</td></tr>';
+    <td><code>\${account.alias}</code></td><td>\${account.tier}</td><td>\${fmt(account.runs)}</td><td>\${fmt(account.inputTokens)}</td><td>\${fmt(account.outputTokens)}</td><td>\${fmt(account.totalTokens)}</td><td>\${cost(account.cost)}</td>
+    <td><div class="bar"><i style="width:\${Math.round((account.totalTokens / max) * 100)}%"></i></div></td></tr>\`).join('') : '<tr><td colspan="8" class="muted">no usage recorded yet</td></tr>';
   el('per-key').innerHTML = report.keys.length ? report.keys.map(entry => \`<tr>
-    <td>\${keyLabel(entry.name, entry.keyId, entry.prefix)}</td><td>\${fmt(entry.runs)}</td><td>\${fmt(entry.inputTokens)}</td><td>\${fmt(entry.outputTokens)}</td><td>\${fmt(entry.totalTokens)}</td></tr>\`).join('') : '<tr><td colspan="5" class="muted">no usage recorded yet</td></tr>';
+    <td>\${keyLabel(entry.name, entry.keyId, entry.prefix)}</td><td>\${fmt(entry.runs)}</td><td>\${fmt(entry.inputTokens)}</td><td>\${fmt(entry.outputTokens)}</td><td>\${fmt(entry.totalTokens)}</td><td>\${cost(entry.cost)}</td></tr>\`).join('') : '<tr><td colspan="6" class="muted">no usage recorded yet</td></tr>';
 }
+
+function usd(value) { return '$' + (value < 1 && value > 0 ? value.toFixed(4) : value.toFixed(2)); }
+/** An unpriced run is called out next to the money rather than folded into it, so a partial estimate never reads as the whole bill. */
+function cost(breakdown) { return usd(breakdown.estimatedCostUsd) + (breakdown.unpricedRuns ? ' <span class="muted" title="' + breakdown.unpricedRuns + ' run(s) had no price for their model">+' + breakdown.unpricedRuns + ' unpriced</span>' : ''); }
 
 /** Runs recorded before named keys existed, or issued by a key since deleted, still need an honest label. */
 function keyLabel(name, keyId, prefix) {
