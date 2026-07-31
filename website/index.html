@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pattystack — Use every ChatGPT plan you pay for, from one endpoint</title>
+  <meta name="description" content="You pay for more than one ChatGPT or Codex plan. Pattystack signs into all of them and sends each request to whichever has the most quota left — through one OpenAI-compatible URL.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            muted: '#737373',
+            'muted-foreground': '#525252',
+            border: '#e5e5e5',
+            danger: '#fb2c36',
+            success: '#00c950',
+            brand: '#0a0a0a',
+          },
+          backgroundImage: {
+            'dot-pattern': 'radial-gradient(#d4d4d4 1.2px, transparent 1.2px)',
+          },
+          boxShadow: {
+            'floating': '0 24px 80px -20px rgba(0,0,0,0.12), 0 8px 24px -12px rgba(0,0,0,0.08)',
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+    .dot-bg {
+      background-image: radial-gradient(#d4d4d4 1.2px, transparent 1.2px);
+      background-size: 28px 28px;
+    }
+    .code-block {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8125rem;
+      line-height: 1.5;
+    }
+    .window-glass {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(8px);
+    }
+    .line-add {
+      background: rgba(0, 201, 80, 0.08);
+      color: #15803d;
+    }
+    .line-del {
+      background: rgba(251, 44, 54, 0.06);
+      color: #b91c1c;
+    }
+    details > summary {
+      list-style: none;
+    }
+    details > summary::-webkit-details-marker {
+      display: none;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-[#fafafa] dot-bg text-brand antialiased">
+
+  <main class="mx-auto max-w-3xl px-4 py-16 md:py-24">
+
+    <!-- Floating window -->
+    <div class="mx-auto mb-10 w-screen max-w-5xl px-4 sm:px-0 relative left-1/2 -translate-x-1/2">
+      <div class="overflow-hidden rounded-xl border border-border bg-white shadow-floating">
+        <!-- Title bar -->
+        <div class="flex items-center justify-between border-b border-border bg-[#f3f4f6] px-4 py-2">
+          <div class="flex items-center gap-2">
+            <span class="h-3 w-3 rounded-full bg-[#fb494b]"></span>
+            <span class="h-3 w-3 rounded-full bg-[#fdb225]"></span>
+            <span class="h-3 w-3 rounded-full bg-[#2ac833]"></span>
+          </div>
+          <div class="flex items-center gap-4 text-xs text-muted">
+            <span class="font-medium text-brand">localhost</span>
+            <span>Network</span>
+          </div>
+          <div class="w-14"></div>
+        </div>
+        <!-- Window body -->
+        <img src="console.webp" alt="The Pattystack console: three stacked plans with 71%, 34% and 8% quota left, token and dollar totals, and the router explaining it will send the next request to work-sub" class="block w-full" width="1200" height="766" loading="eager">
+      </div>
+    </div>
+
+    <!-- Hero -->
+    <div class="text-center">
+      <h1 class="text-5xl font-semibold tracking-tight text-black sm:text-6xl">Stop hitting the limit<br class="hidden sm:block"> on one plan</h1>
+      <p class="mx-auto mt-5 max-w-xl text-lg text-muted-foreground">If you pay for more than one ChatGPT or Codex plan, you can only use one at a time. <span class="text-black">Pattystack</span> signs into all of them and sends every request to whichever has the most left — through a single OpenAI-compatible URL.</p>
+      <p class="mx-auto mt-3 max-w-xl text-sm text-muted">Free and open source. Runs on your own machine.</p>
+
+      <!-- Primary command -->
+      <div class="mx-auto mt-8 max-w-xl">
+        <div class="flex items-center gap-3 rounded-xl border border-black bg-black px-4 py-3.5 text-left shadow-floating">
+          <span class="code-block select-none text-[#7dd3a0]">$</span>
+          <code class="code-block flex-1 overflow-x-auto whitespace-nowrap text-white">npx @puffle/pattystack</code>
+          <button class="copy-btn shrink-0 rounded-md p-1.5 text-white/60 hover:bg-white/10 hover:text-white" aria-label="Copy command" data-copy="npx @puffle/pattystack">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+        <p class="mt-3 text-sm text-muted">Needs Node 22+. Opens the console above at <code class="rounded border border-border bg-white px-1 font-mono text-xs">127.0.0.1:3210</code>.</p>
+      </div>
+    </div>
+
+    <!-- Why -->
+    <section class="mt-20">
+      <h2 class="text-center text-2xl font-semibold tracking-tight text-black">Why you'd want this</h2>
+      <div class="mx-auto mt-8 grid max-w-2xl gap-4 sm:grid-cols-2">
+        <div class="rounded-xl border border-border bg-white p-5 text-left">
+          <h3 class="text-sm font-semibold text-black">You already paid for the quota</h3>
+          <p class="mt-2 text-sm text-muted-foreground">A personal plan, a work seat, one for a side project. Three bills, and you still get rate-limited on whichever one you happen to be signed into. Pattystack uses all of them.</p>
+        </div>
+        <div class="rounded-xl border border-border bg-white p-5 text-left">
+          <h3 class="text-sm font-semibold text-black">No more logging in and out</h3>
+          <p class="mt-2 text-sm text-muted-foreground">Your editor, your agent, your scripts all point at one URL and one key. Which account actually serves the request is Pattystack's problem, not yours.</p>
+        </div>
+        <div class="rounded-xl border border-border bg-white p-5 text-left">
+          <h3 class="text-sm font-semibold text-black">It doesn't just fail at the cap</h3>
+          <p class="mt-2 text-sm text-muted-foreground">When a plan is throttled it moves to the next one. When every plan is spent it can fall back to pay-as-you-go API credit, so you get an answer instead of an error.</p>
+        </div>
+        <div class="rounded-xl border border-border bg-white p-5 text-left">
+          <h3 class="text-sm font-semibold text-black">You can see what you're burning</h3>
+          <p class="mt-2 text-sm text-muted-foreground">A local console shows tokens per plan, what your subscriptions absorbed for free, and what the paid fallback actually cost you in dollars.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="mt-20">
+      <h2 class="text-center text-2xl font-semibold tracking-tight text-black">How it works</h2>
+      <ol class="mx-auto mt-8 max-w-2xl space-y-3">
+        <li class="flex gap-4 rounded-xl border border-border bg-white p-5 text-left">
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black text-xs font-medium text-white">1</span>
+          <p class="text-sm text-muted-foreground"><span class="font-medium text-black">Start it on your machine.</span> One command. It listens on <code class="rounded border border-border bg-gray-50 px-1 font-mono text-xs">127.0.0.1:3210</code>, an address that never leaves the computer it runs on, and prints a key.</p>
+        </li>
+        <li class="flex gap-4 rounded-xl border border-border bg-white p-5 text-left">
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black text-xs font-medium text-white">2</span>
+          <p class="text-sm text-muted-foreground"><span class="font-medium text-black">Add your plans.</span> Sign each ChatGPT or Codex account in once from the console. Add an OpenAI-compatible API key too if you want a paid spare tyre.</p>
+        </li>
+        <li class="flex gap-4 rounded-xl border border-border bg-white p-5 text-left">
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black text-xs font-medium text-white">3</span>
+          <p class="text-sm text-muted-foreground"><span class="font-medium text-black">Point your tools at it.</span> Anything that speaks the OpenAI API — Cursor, the SDKs, your own code — just needs the URL and the key. Pattystack picks the account per request.</p>
+        </li>
+      </ol>
+    </section>
+
+    <div class="mt-20 text-center">
+      <h2 class="text-2xl font-semibold tracking-tight text-black">Try it without signing anything in</h2>
+      <p class="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Add <code class="rounded border border-border bg-white px-1 font-mono text-xs">--fake</code> and it makes up plans that behave like real ones, so you can watch it choose between them first.</p>
+    </div>
+
+    <!-- Mode tabs -->
+    <div class="mt-8 flex justify-center">
+      <div class="inline-flex items-center rounded-full border border-border bg-white p-1 shadow-sm" id="mode-tabs">
+        <button class="mode-btn rounded-full px-4 py-1.5 text-sm font-medium transition" data-mode="cli">cli</button>
+        <button class="mode-btn rounded-full px-4 py-1.5 text-sm font-medium text-muted transition" data-mode="agent">agent prompt</button>
+      </div>
+    </div>
+
+    <!-- Command block -->
+    <div class="mx-auto mt-6 max-w-xl">
+      <div id="cli-panel" class="block">
+        <div class="flex items-center justify-between rounded-t-xl border border-border bg-white px-4 py-3">
+          <div class="code-block overflow-x-auto whitespace-nowrap text-muted">$ npx @puffle/pattystack --fake=work-sub:0.71:190 --fake=side-project:0.34:64</div>
+          <button class="copy-btn shrink-0 rounded-md p-1.5 text-muted hover:bg-gray-100" aria-label="Copy command" data-copy="npx @puffle/pattystack --fake=work-sub:0.71:190 --fake=side-project:0.34:64">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="rounded-b-xl border-x border-b border-border bg-[#fafafa] px-4 py-3 text-sm text-muted-foreground">
+          <ul class="space-y-2 text-left">
+            <li class="flex gap-2"><span class="text-muted">•</span> Runs a local daemon on <kbd class="rounded bg-white px-1 font-mono text-xs border border-border">http://127.0.0.1:3210</kbd></li>
+            <li class="flex gap-2"><span class="text-muted">•</span> Prints a one-time API key; connect in the browser console</li>
+            <li class="flex gap-2"><span class="text-muted">•</span> Point Cursor, Codex, or the OpenAI SDK at the same URL</li>
+          </ul>
+        </div>
+      </div>
+
+      <div id="agent-panel" class="hidden">
+        <div class="flex items-center justify-between rounded-t-xl border border-border bg-white px-4 py-2.5">
+          <span class="text-xs font-medium text-muted uppercase tracking-wide">Prompt for coding agents</span>
+          <button class="copy-btn rounded-md p-1.5 text-muted hover:bg-gray-100" aria-label="Copy prompt" data-copy="Install @puffle/pattystack from npm, start it with fake subs, and verify /v1/chat/completions returns 200 on 127.0.0.1:3210. Then stop the daemon and tell me the next step.">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="rounded-b-xl border-x border-b border-border bg-[#fafafa] px-4 py-3 text-left text-sm text-muted-foreground">
+          <p class="code-block leading-relaxed text-muted-foreground">Install <span class="text-black">@puffle/pattystack</span> from npm, start it with a fake sub, and verify a POST to <span class="text-black">/v1/chat/completions</span> on <span class="text-black">127.0.0.1:3210</span> returns 200. Then stop the daemon and tell me the next step.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- GitHub -->
+    <div class="mt-8 flex justify-center">
+      <a href="https://github.com/DevelopIQ-ai/codex-patty" target="_blank" rel="noopener" class="inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-medium text-brand shadow-sm hover:bg-gray-50 transition">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12Z"/>
+        </svg>
+        <span>GitHub</span>
+        <span id="star-count" class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-muted">0</span>
+      </a>
+    </div>
+
+    <!-- OpenAI clients section -->
+    <section class="mt-20">
+      <h2 class="text-center text-2xl font-semibold tracking-tight text-black">OpenAI-compatible clients</h2>
+      <p class="mx-auto mt-2 max-w-lg text-center text-sm text-muted-foreground">Pattystack supports any client that can set a custom <code class="rounded bg-white px-1 text-xs border border-border font-mono">baseURL</code> and <code class="rounded bg-white px-1 text-xs border border-border font-mono">apiKey</code>.</p>
+
+      <div class="mx-auto mt-8 max-w-2xl overflow-hidden rounded-xl border border-border bg-white shadow-floating">
+        <div class="border-b border-border px-4 py-3">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex items-center gap-2 text-sm">
+              <span class="text-muted-foreground">Client:</span>
+              <div class="relative">
+                <select id="client-select" class="appearance-none rounded-md border border-border bg-gray-50 px-3 py-1.5 pr-8 text-sm font-medium focus:outline-none">
+                  <option value="curl">cURL</option>
+                  <option value="python">Python</option>
+                  <option value="node">Node</option>
+                </select>
+                <svg class="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m6 9 6 6 6-6"></path>
+                </svg>
+              </div>
+            </div>
+            <button class="copy-btn inline-flex items-center gap-1.5 rounded-md border border-border bg-white px-3 py-1.5 text-xs font-medium hover:bg-gray-50" data-copy-source="client-code">
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              Copy configuration
+            </button>
+          </div>
+        </div>
+        <div class="bg-[#fafafa] p-4">
+          <pre id="client-code" class="code-block overflow-x-auto text-muted-foreground"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="mt-20">
+      <h2 class="text-center text-2xl font-semibold tracking-tight text-black">FAQ</h2>
+      <div class="mx-auto mt-6 max-w-2xl space-y-3">
+        <details class="group rounded-xl border border-border bg-white">
+          <summary class="flex cursor-pointer items-center justify-between px-5 py-4 text-sm font-medium text-brand">
+            What actually is it?
+            <svg class="h-4 w-4 text-muted transition group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </summary>
+          <div class="px-5 pb-4 text-sm text-muted-foreground">
+            A small program you run on your own machine. It holds the logins for every ChatGPT/Codex plan you pay for and offers them to your tools as a single OpenAI-compatible API. Each request goes to whichever plan has the most quota left.
+          </div>
+        </details>
+
+        <details class="group rounded-xl border border-border bg-white">
+          <summary class="flex cursor-pointer items-center justify-between px-5 py-4 text-sm font-medium text-brand">
+            How is this different from the official OpenAI API?
+            <svg class="h-4 w-4 text-muted transition group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </summary>
+          <div class="px-5 pb-4 text-sm text-muted-foreground">
+            The OpenAI API bills you per token on top of whatever your subscriptions already cost. Pattystack spends the subscription quota you have already paid for first, and only reaches for paid API credit once everything else is used up.
+          </div>
+        </details>
+
+        <details class="group rounded-xl border border-border bg-white">
+          <summary class="flex cursor-pointer items-center justify-between px-5 py-4 text-sm font-medium text-brand">
+            Does it work with Claude Code / Cursor?
+            <svg class="h-4 w-4 text-muted transition group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </summary>
+          <div class="px-5 pb-4 text-sm text-muted-foreground">
+            Yes — anything that lets you change the API base URL. Point it at <code class="rounded bg-white px-1 font-mono text-xs border border-border">http://127.0.0.1:3210/v1</code> and use the API key printed at startup.
+          </div>
+        </details>
+
+        <details class="group rounded-xl border border-border bg-white">
+          <summary class="flex cursor-pointer items-center justify-between px-5 py-4 text-sm font-medium text-brand">
+            Is this against OpenAI's terms of service?
+            <svg class="h-4 w-4 text-muted transition group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </summary>
+          <div class="px-5 pb-4 text-sm text-muted-foreground">
+            Read the terms for your own plans and decide — we can't decide that for you, and nothing here is legal advice. The honest picture: Pattystack is for accounts <span class="text-black">you</span> are entitled to use. It signs in with the normal Codex login flow, one account at a time, and each request is served by exactly one account, the same as if you had switched to it by hand. What it does not do is share one account between several people, resell access, or work around a rate limit on any single account. If you use it to pool other people's accounts, that is on you, and it will almost certainly break your provider's terms.
+          </div>
+        </details>
+
+        <details class="group rounded-xl border border-border bg-white">
+          <summary class="flex cursor-pointer items-center justify-between px-5 py-4 text-sm font-medium text-brand">
+            Is my data private?
+            <svg class="h-4 w-4 text-muted transition group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </summary>
+          <div class="px-5 pb-4 text-sm text-muted-foreground">
+            It listens on <code class="rounded bg-white px-1 font-mono text-xs border border-border">127.0.0.1</code>, an address that never leaves the machine it runs on — not your phone on the same wifi, not anyone on the internet. Your prompts go to the AI provider you chose and nowhere else. There is no Pattystack server.
+          </div>
+        </details>
+
+        <details class="group rounded-xl border border-border bg-white">
+          <summary class="flex cursor-pointer items-center justify-between px-5 py-4 text-sm font-medium text-brand">
+            What can I plug into it?
+            <svg class="h-4 w-4 text-muted transition group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </summary>
+          <div class="px-5 pb-4 text-sm text-muted-foreground">
+            ChatGPT and Codex plans are the main case — Plus, Pro, Team seats, however many you have. You can also add anything that speaks the OpenAI API, including OpenAI itself, a proxy, vLLM, or Ollama.
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="mt-20 border-t border-border pt-8 text-center text-sm text-muted">
+      <div class="flex justify-center gap-6">
+        <a href="https://github.com/DevelopIQ-ai/codex-patty" class="hover:text-black transition">GitHub</a>
+        <a href="https://www.npmjs.com/package/@puffle/pattystack" class="hover:text-black transition">npm</a>
+        <a href="https://github.com/DevelopIQ-ai/codex-patty/blob/main/docs/deploy.md" class="hover:text-black transition">Deploy</a>
+      </div>
+      <p class="mt-4 text-xs text-muted-foreground">© 2026 Pattystack. MIT licensed.</p>
+    </footer>
+
+  </main>
+
+  <script>
+    const commands = {
+      curl: `curl http://127.0.0.1:3210/v1/chat/completions \\
+  -H "Authorization: Bearer cp_live_..." \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"gpt-5-codex","messages":[{"role":"user","content":"hi"}]}'`,
+      python: `from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:3210/v1",
+    api_key="cp_live_...",
+)
+
+response = client.chat.completions.create(
+    model="gpt-5-codex",
+    messages=[{"role": "user", "content": "hi"}],
+)
+print(response.choices[0].message.content)`,
+      node: `import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://127.0.0.1:3210/v1',
+  apiKey: 'cp_live_...',
+});
+
+const { choices } = await client.chat.completions.create({
+  model: 'gpt-5-codex',
+  messages: [{ role: 'user', content: 'hi' }],
+});
+
+console.log(choices[0].message.content);`
+    };
+
+    const select = document.getElementById('client-select');
+    const codePre = document.getElementById('client-code');
+
+    function setClient(key) {
+      codePre.textContent = commands[key];
+    }
+
+    select.addEventListener('change', (e) => setClient(e.target.value));
+    setClient('curl');
+
+    // Mode tabs
+    const tabs = document.getElementById('mode-tabs');
+    const cliPanel = document.getElementById('cli-panel');
+    const agentPanel = document.getElementById('agent-panel');
+
+    tabs.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('mode-btn')) return;
+      const mode = e.target.dataset.mode;
+      tabs.querySelectorAll('.mode-btn').forEach(btn => {
+        const active = btn.dataset.mode === mode;
+        btn.classList.toggle('bg-black', active);
+        btn.classList.toggle('text-white', active);
+        btn.classList.toggle('text-muted', !active);
+      });
+      cliPanel.classList.toggle('hidden', mode !== 'cli');
+      cliPanel.classList.toggle('block', mode === 'cli');
+      agentPanel.classList.toggle('hidden', mode !== 'agent');
+      agentPanel.classList.toggle('block', mode === 'agent');
+    });
+
+    // Initialize active tab
+    const firstTab = tabs.querySelector('[data-mode="cli"]');
+    firstTab.classList.add('bg-black', 'text-white');
+    firstTab.classList.remove('text-muted');
+
+    // Copy buttons
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        let text = btn.dataset.copy;
+        if (!text && btn.dataset.copySource) {
+          text = document.getElementById(btn.dataset.copySource).textContent;
+        }
+        if (!text) return;
+        await navigator.clipboard.writeText(text);
+        const original = btn.innerHTML;
+        btn.innerHTML = `<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>`;
+        setTimeout(() => btn.innerHTML = original, 1200);
+      });
+    });
+
+    // Star count
+    fetch('https://api.github.com/repos/DevelopIQ-ai/codex-patty')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data && typeof data.stargazers_count === 'number') {
+          document.getElementById('star-count').textContent = data.stargazers_count;
+        }
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>
