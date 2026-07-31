@@ -4,7 +4,7 @@ export const consoleHtml = `<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Codex Patty</title>
+<title>Pattystack</title>
 <style>
 :root { color-scheme: dark; --bg:#0b0d12; --panel:#141821; --line:#232937; --text:#e6e9f0; --muted:#8d97ad; --accent:#7cc4ff; --good:#5ddc9a; --warn:#ffcf6b; --bad:#ff7a7a; }
 * { box-sizing: border-box; }
@@ -51,7 +51,7 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 </head>
 <body>
 <header>
-  <h1>Codex Patty</h1>
+  <h1>Pattystack</h1>
   <span class="tag">local sub router &middot; <span id="health" class="muted">checking…</span></span>
   <span class="spacer"></span>
   <input id="key" type="password" placeholder="cp_live_… API key" size="28" />
@@ -114,7 +114,7 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
       <button id="send" class="primary">Send</button>
       <button id="cancel" disabled>Cancel</button>
     </div>
-    <textarea id="prompt" placeholder="Ask the stacked subs something…">Say hello from Codex Patty.</textarea>
+    <textarea id="prompt" placeholder="Ask the stacked subs something…">Say hello from Pattystack.</textarea>
     <label class="muted"><input type="checkbox" id="use-tools" /> offer tools (OpenAI <code>tools</code> array)</label>
     <textarea id="tools" class="hidden" spellcheck="false" placeholder='[{"type":"function","function":{"name":"get_weather"}}]'>[
   {

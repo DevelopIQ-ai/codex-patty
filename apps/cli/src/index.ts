@@ -2,7 +2,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-const configPath = process.env.PATTY_CONFIG_PATH ?? join(homedir(), '.config', 'codex-patty', 'config.json');
+const configPath = process.env.PATTY_CONFIG_PATH ?? join(homedir(), '.config', 'pattystack', 'config.json');
 const base = process.env.PATTY_URL ?? 'http://127.0.0.1:3210';
 const parsed = new URL(base); if (!['127.0.0.1', '::1', 'localhost'].includes(parsed.hostname)) throw new Error('Patty CLI refuses non-loopback URLs');
 const storedKey = (() => { try { return JSON.parse(readFileSync(configPath, 'utf8')).key as string; } catch { return undefined; } })();

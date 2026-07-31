@@ -12,7 +12,7 @@ Codex itself may persist its managed credentials in each isolated `CODEX_HOME` s
 
 ## Packaging and services
 
-`corepack pnpm pack:npm` builds the single publishable `codex-patty` package into `dist-npm/`: the compiled daemon, the CLI, the console and the `codex-patty` launcher, with no runtime dependencies (`@patty/contracts` is imported for types only, so nothing survives compilation). `corepack pnpm test:pack` then exercises that artifact the way a user meets it — `npx codex-patty` must boot, answer `/healthz`, serve a real `/v1/chat/completions` from a fake sub, and `codex-patty usage` must reach the running daemon — so a packaging regression fails CI rather than reaching npm.
+`corepack pnpm pack:npm` builds the single publishable `@puffle/pattystack` package into `dist-npm/`: the compiled daemon, the CLI, the console and the `pattystack` launcher, with no runtime dependencies (`@patty/contracts` is imported for types only, so nothing survives compilation). `corepack pnpm test:pack` then exercises that artifact the way a user meets it — `npx @puffle/pattystack` must boot, answer `/healthz`, serve a real `/v1/chat/completions` from a fake sub, and `pattystack usage` must reach the running daemon — so a packaging regression fails CI rather than reaching npm.
 
 The launcher dispatches on its first argument: absent, `start`, `up` or a `--flag` starts the daemon; anything else is a CLI command. `pattyd` and `patty` remain available as direct bins.
 
@@ -23,7 +23,7 @@ Under a service manager, the daemon needs only `PATTY_DB_PATH`, plus `PATTY_CODE
 The daemon binds `127.0.0.1` by default and that is the only unguarded option, because a stacked Patty is an unmetered gateway to every subscription it holds. `PATTY_HOST` chooses the interface, and a non-loopback value additionally requires `PATTY_ALLOW_NON_LOOPBACK=1`:
 
 ```sh
-PATTY_ALLOW_NON_LOOPBACK=1 PATTY_HOST=100.64.0.7 codex-patty   # a tailnet address, for example
+PATTY_ALLOW_NON_LOOPBACK=1 PATTY_HOST=100.64.0.7 pattystack   # a tailnet address, for example
 ```
 
 Wildcard addresses (`0.0.0.0`, `::`, empty) are refused even with the opt-in — name the exact interface, so exposure is a decision rather than a default. Keys are the only authentication on the wire and Patty speaks plain HTTP, so anything beyond loopback belongs on a private network (a tailnet, a WireGuard interface) or behind a TLS-terminating reverse proxy, with a separate named key per consumer so a leak is revocable on its own.

@@ -1,6 +1,6 @@
 # Changelog
 
-Notable changes to Codex Patty. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses [semantic versioning](https://semver.org/).
+Notable changes to Pattystack. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
@@ -27,7 +27,7 @@ First working version: everything below landed before the project had a changelo
 - **Operator console** on loopback: subs, quota windows, router scores and reasons, streaming inference, usage, keys, run history and `doctor`.
 - **Observability**: Prometheus `/metrics`, filterable run history, `patty doctor`, JSON request logs that contain no prompts, output or secrets.
 - **Opt-in non-loopback binding** (`PATTY_ALLOW_NON_LOOPBACK=1` plus a named `PATTY_HOST`; wildcards always refused).
-- **Distribution**: one dependency-free `codex-patty` package holding daemon, CLI and console, smoke-tested in CI, plus `corepack pnpm demo` for three fake subs.
+- **Distribution**: one dependency-free `@puffle/pattystack` package holding daemon, CLI and console, smoke-tested in CI, plus `corepack pnpm demo` for three fake subs.
 
 ### Fixed
 

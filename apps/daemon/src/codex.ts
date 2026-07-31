@@ -34,7 +34,7 @@ export class CodexAppServerAdapter extends EventEmitter implements ProviderAdapt
     child.once('error', error => this.stop(error)); child.stdin.on('error', error => this.stop(error)); child.once('exit', () => this.stop(new Error('app-server exited')));
     createInterface({ input: child.stdout }).on('line', line => this.receive(line)); child.stderr.on('data', () => undefined);
     try {
-      const initialized = await this.rpc('initialize', { clientInfo: { name: 'codex-patty', version: '0.1.0' }, capabilities: null }) as { userAgent?: string; codexHome?: string };
+      const initialized = await this.rpc('initialize', { clientInfo: { name: 'pattystack', version: '0.1.0' }, capabilities: null }) as { userAgent?: string; codexHome?: string };
       let initializedHome: string | undefined; try { if (typeof initialized.codexHome === 'string') initializedHome = realpathSync(initialized.codexHome); } catch { initializedHome = undefined; }
       if (typeof initialized.userAgent !== 'string' || initializedHome !== expectedHome) throw new Error('protocol_incompatible: invalid initialize response');
       this.notify('initialized');

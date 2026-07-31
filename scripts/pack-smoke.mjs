@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Verifies the packed artifact the way a user meets it: `npx codex-patty` must boot a
-// working daemon, and `codex-patty <command>` must reach the CLI, from the packed files only.
+// Verifies the packed artifact the way a user meets it: `npx @puffle/pattystack` must boot a
+// working daemon, and `pattystack <command>` must reach the CLI, from the packed files only.
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const launcher = join(root, 'dist-npm/bin/codex-patty.mjs');
+const launcher = join(root, 'dist-npm/bin/pattystack.mjs');
 const port = 3999;
 const home = await mkdtemp(join(tmpdir(), 'patty-pack-'));
 const fail = (message) => { console.error(`pack smoke failed: ${message}`); process.exitCode = 1; };

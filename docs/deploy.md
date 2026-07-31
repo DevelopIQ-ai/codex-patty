@@ -17,7 +17,7 @@ Anything with a disk works: a $5–10 VM (Hetzner, EC2, DigitalOcean), Fly.io wi
 ```sh
 # Node 22+ is required (node:sqlite)
 node -v
-npm i -g codex-patty
+npm i -g @puffle/pattystack
 mkdir -p ~/.patty && chmod 700 ~/.patty
 ```
 
@@ -41,14 +41,14 @@ curl -XPOST $PATTY/v1/accounts/openai-compatible -H "authorization: Bearer $PATT
 ## 3. Keep it running
 
 ```ini
-# /etc/systemd/system/codex-patty.service   →  systemctl enable --now codex-patty
+# /etc/systemd/system/pattystack.service   →  systemctl enable --now pattystack
 [Unit]
-Description=Codex Patty
+Description=Pattystack
 After=network-online.target
 
 [Service]
 User=patty
-ExecStart=/usr/bin/codex-patty
+ExecStart=/usr/bin/pattystack
 Environment=PATTY_DB_PATH=/home/patty/.patty/patty.sqlite
 Environment=PATTY_HOST=127.0.0.1
 # only needed when the Codex CLI is not on the service user's PATH
@@ -60,7 +60,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-A user unit (`~/.config/systemd/user/codex-patty.service`) works too, but pair it with `loginctl enable-linger $USER` or it dies when you log out. Restarts are safe: the store reconciles in-flight runs transactionally at boot, so an abrupt kill can't leave a sub with phantom active runs.
+A user unit (`~/.config/systemd/user/pattystack.service`) works too, but pair it with `loginctl enable-linger $USER` or it dies when you log out. Restarts are safe: the store reconciles in-flight runs transactionally at boot, so an abrupt kill can't leave a sub with phantom active runs.
 
 ## 4. Let your app reach it
 

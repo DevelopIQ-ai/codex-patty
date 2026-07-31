@@ -14,14 +14,14 @@ body:
       label: How to reproduce
       description: >
         Ideally with fake subs so anyone can run it, e.g.
-        `npx codex-patty --fake=a:0.8 --fake=b:0.2` plus the request you sent.
+        `npx @puffle/pattystack --fake=a:0.8 --fake=b:0.2` plus the request you sent.
       render: shell
     validations: {required: true}
   - type: input
     id: version
     attributes:
       label: Patty and Node version
-      placeholder: codex-patty 0.1.0, node 22.14.0
+      placeholder: @puffle/pattystack 0.1.0, node 22.14.0
     validations: {required: true}
   - type: textarea
     id: logs
