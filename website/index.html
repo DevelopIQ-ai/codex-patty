@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pattystack — Stack your Codex and ChatGPT subscriptions</title>
-  <meta name="description" content="Run all your AI subscriptions through one local, OpenAI-compatible endpoint.">
+  <title>Pattystack — Use every ChatGPT plan you pay for, from one endpoint</title>
+  <meta name="description" content="You pay for more than one ChatGPT or Codex plan. Pattystack signs into all of them and sends each request to whichever has the most quota left — through one OpenAI-compatible URL.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -95,19 +95,28 @@
               <circle cx="8" cy="8" r="6"></circle>
               <path d="M8 4.5v3.5l2 2"></path>
             </svg>
-            <span>build signup form</span>
+            <span>Three plans, one endpoint</span>
           </div>
-          <div class="code-block rounded-lg border border-border bg-[#f9fafb] p-4 text-left">
-            <div class="line-del px-2 py-0.5">-  alias: fallback</div>
-            <div class="line-add px-2 py-0.5">+  alias: fallback</div>
-            <div class="line-add px-2 py-0.5">+  tier: fallback</div>
-            <div class="px-2 py-0.5 text-muted">   models:</div>
-            <div class="line-add px-2 py-0.5">+    - gpt-5-codex</div>
-            <div class="px-2 py-0.5 text-muted">   quota: 0.25</div>
+          <div class="code-block space-y-2 rounded-lg border border-border bg-[#f9fafb] p-4 text-left">
+            <div class="flex items-center gap-3 px-2">
+              <span class="w-28 shrink-0 text-brand">personal</span>
+              <span class="h-1.5 flex-1 rounded-full bg-gray-200"><span class="block h-1.5 w-[8%] rounded-full bg-danger"></span></span>
+              <span class="w-16 shrink-0 text-right text-muted">8% left</span>
+            </div>
+            <div class="flex items-center gap-3 px-2">
+              <span class="w-28 shrink-0 text-brand">work</span>
+              <span class="h-1.5 flex-1 rounded-full bg-gray-200"><span class="block h-1.5 w-[71%] rounded-full bg-success"></span></span>
+              <span class="w-16 shrink-0 text-right text-muted">71% left</span>
+            </div>
+            <div class="flex items-center gap-3 px-2">
+              <span class="w-28 shrink-0 text-brand">side project</span>
+              <span class="h-1.5 flex-1 rounded-full bg-gray-200"><span class="block h-1.5 w-[34%] rounded-full bg-[#fdb225]"></span></span>
+              <span class="w-16 shrink-0 text-right text-muted">34% left</span>
+            </div>
           </div>
           <div class="mt-4 flex items-center gap-2 text-xs text-muted">
-            <span class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border">✻</span>
-            <span>coalescing...</span>
+            <span class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border text-success">→</span>
+            <span>next request routed to <span class="font-mono text-brand">work</span> — most headroom</span>
           </div>
         </div>
       </div>
@@ -115,12 +124,60 @@
 
     <!-- Hero -->
     <div class="text-center">
-      <h1 class="text-5xl font-semibold tracking-tight text-black sm:text-6xl">Pattystack</h1>
-      <p class="mx-auto mt-4 max-w-xl text-lg text-muted-foreground">A local router for your stacked AI subscriptions. Run all your models through one OpenAI-compatible endpoint.</p>
+      <h1 class="text-5xl font-semibold tracking-tight text-black sm:text-6xl">Stop hitting the limit<br class="hidden sm:block"> on one plan</h1>
+      <p class="mx-auto mt-5 max-w-xl text-lg text-muted-foreground">If you pay for more than one ChatGPT or Codex plan, you can only use one at a time. <span class="text-black">Pattystack</span> signs into all of them and sends every request to whichever has the most left — through a single OpenAI-compatible URL.</p>
+      <p class="mx-auto mt-3 max-w-xl text-sm text-muted">Free and open source. Runs on your own machine.</p>
+    </div>
+
+    <!-- Why -->
+    <section class="mt-20">
+      <h2 class="text-center text-2xl font-semibold tracking-tight text-black">Why you'd want this</h2>
+      <div class="mx-auto mt-8 grid max-w-2xl gap-4 sm:grid-cols-2">
+        <div class="rounded-xl border border-border bg-white p-5 text-left">
+          <h3 class="text-sm font-semibold text-black">You already paid for the quota</h3>
+          <p class="mt-2 text-sm text-muted-foreground">A personal plan, a work seat, one for a side project. Three bills, and you still get rate-limited on whichever one you happen to be signed into. Pattystack uses all of them.</p>
+        </div>
+        <div class="rounded-xl border border-border bg-white p-5 text-left">
+          <h3 class="text-sm font-semibold text-black">No more logging in and out</h3>
+          <p class="mt-2 text-sm text-muted-foreground">Your editor, your agent, your scripts all point at one URL and one key. Which account actually serves the request is Pattystack's problem, not yours.</p>
+        </div>
+        <div class="rounded-xl border border-border bg-white p-5 text-left">
+          <h3 class="text-sm font-semibold text-black">It doesn't just fail at the cap</h3>
+          <p class="mt-2 text-sm text-muted-foreground">When a plan is throttled it moves to the next one. When every plan is spent it can fall back to pay-as-you-go API credit, so you get an answer instead of an error.</p>
+        </div>
+        <div class="rounded-xl border border-border bg-white p-5 text-left">
+          <h3 class="text-sm font-semibold text-black">You can see what you're burning</h3>
+          <p class="mt-2 text-sm text-muted-foreground">A local console shows tokens per plan, what your subscriptions absorbed for free, and what the paid fallback actually cost you in dollars.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="mt-20">
+      <h2 class="text-center text-2xl font-semibold tracking-tight text-black">How it works</h2>
+      <ol class="mx-auto mt-8 max-w-2xl space-y-3">
+        <li class="flex gap-4 rounded-xl border border-border bg-white p-5 text-left">
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black text-xs font-medium text-white">1</span>
+          <p class="text-sm text-muted-foreground"><span class="font-medium text-black">Start it on your machine.</span> One command. It listens on <code class="rounded border border-border bg-gray-50 px-1 font-mono text-xs">127.0.0.1:3210</code>, an address that never leaves the computer it runs on, and prints a key.</p>
+        </li>
+        <li class="flex gap-4 rounded-xl border border-border bg-white p-5 text-left">
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black text-xs font-medium text-white">2</span>
+          <p class="text-sm text-muted-foreground"><span class="font-medium text-black">Add your plans.</span> Sign each ChatGPT or Codex account in once from the console. Add an OpenAI-compatible API key too if you want a paid spare tyre.</p>
+        </li>
+        <li class="flex gap-4 rounded-xl border border-border bg-white p-5 text-left">
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black text-xs font-medium text-white">3</span>
+          <p class="text-sm text-muted-foreground"><span class="font-medium text-black">Point your tools at it.</span> Anything that speaks the OpenAI API — Cursor, the SDKs, your own code — just needs the URL and the key. Pattystack picks the account per request.</p>
+        </li>
+      </ol>
+    </section>
+
+    <div class="mt-20 text-center">
+      <h2 class="text-2xl font-semibold tracking-tight text-black">Try it in one command</h2>
+      <p class="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">This starts it with a pretend plan, so you can see the console without signing anything in.</p>
     </div>
 
     <!-- Mode tabs -->
-    <div class="mt-10 flex justify-center">
+    <div class="mt-8 flex justify-center">
       <div class="inline-flex items-center rounded-full border border-border bg-white p-1 shadow-sm" id="mode-tabs">
         <button class="mode-btn rounded-full px-4 py-1.5 text-sm font-medium transition" data-mode="cli">cli</button>
         <button class="mode-btn rounded-full px-4 py-1.5 text-sm font-medium text-muted transition" data-mode="agent">agent prompt</button>
@@ -217,13 +274,13 @@
       <div class="mx-auto mt-6 max-w-2xl space-y-3">
         <details class="group rounded-xl border border-border bg-white">
           <summary class="flex cursor-pointer items-center justify-between px-5 py-4 text-sm font-medium text-brand">
-            What is Pattystack?
+            What actually is it?
             <svg class="h-4 w-4 text-muted transition group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m6 9 6 6 6-6"></path>
             </svg>
           </summary>
           <div class="px-5 pb-4 text-sm text-muted-foreground">
-            Pattystack is a local daemon that signs into multiple Codex or OpenAI-compatible subscriptions and routes each request to the sub with the most available quota. It's one endpoint for all the subscriptions you already pay for.
+            A small program you run on your own machine. It holds the logins for every ChatGPT/Codex plan you pay for and offers them to your tools as a single OpenAI-compatible API. Each request goes to whichever plan has the most quota left.
           </div>
         </details>
 
@@ -235,7 +292,7 @@
             </svg>
           </summary>
           <div class="px-5 pb-4 text-sm text-muted-foreground">
-            You bring the subscriptions, Pattystack brings the routing. It runs on your machine or tailnet, routes to the cheapest available sub, and can fall back to paid API credits only when all your subs are exhausted.
+            The OpenAI API bills you per token on top of whatever your subscriptions already cost. Pattystack spends the subscription quota you have already paid for first, and only reaches for paid API credit once everything else is used up.
           </div>
         </details>
 
@@ -247,7 +304,7 @@
             </svg>
           </summary>
           <div class="px-5 pb-4 text-sm text-muted-foreground">
-            Yes. Point any client that supports a custom OpenAI-compatible endpoint at <code class="rounded bg-white px-1 font-mono text-xs border border-border">http://127.0.0.1:3210/v1</code> and use the API key printed at startup.
+            Yes — anything that lets you change the API base URL. Point it at <code class="rounded bg-white px-1 font-mono text-xs border border-border">http://127.0.0.1:3210/v1</code> and use the API key printed at startup.
           </div>
         </details>
 
@@ -259,19 +316,19 @@
             </svg>
           </summary>
           <div class="px-5 pb-4 text-sm text-muted-foreground">
-            By default Pattystack binds to <code class="rounded bg-white px-1 font-mono text-xs border border-border">127.0.0.1</code>, so only the machine it's running on can reach it. Prompts and responses are not sent to any third party beyond the provider you route to.
+            It listens on <code class="rounded bg-white px-1 font-mono text-xs border border-border">127.0.0.1</code>, an address that never leaves the machine it runs on — not your phone on the same wifi, not anyone on the internet. Your prompts go to the AI provider you chose and nowhere else. There is no Pattystack server.
           </div>
         </details>
 
         <details class="group rounded-xl border border-border bg-white">
           <summary class="flex cursor-pointer items-center justify-between px-5 py-4 text-sm font-medium text-brand">
-            What subscriptions can I stack?
+            What can I plug into it?
             <svg class="h-4 w-4 text-muted transition group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m6 9 6 6 6-6"></path>
             </svg>
           </summary>
           <div class="px-5 pb-4 text-sm text-muted-foreground">
-            Any OpenAI-compatible provider. The primary use case is Codex app-server subscriptions and personal ChatGPT/Plus accounts, but you can also add OpenAI, Anthropic-compatible proxies, vLLM, or Ollama endpoints.
+            ChatGPT and Codex plans are the main case — Plus, Pro, Team seats, however many you have. You can also add anything that speaks the OpenAI API, including OpenAI itself, a proxy, vLLM, or Ollama.
           </div>
         </details>
       </div>
