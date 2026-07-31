@@ -1,49 +1,48 @@
 import React from "react";
+import { cubicBezier, spring as motionSpring, transform } from "motion";
 import {
   AbsoluteFill,
   Audio,
   Composition,
-  Easing,
-  interpolate,
   staticFile,
   useCurrentFrame,
 } from "remotion";
 
 const FPS = 30;
 export const DURATION = 360;
-
 const theme = {
-  bg: "linear-gradient(155deg, #f7f7f7 0%, #e0e0e0 100%)",
-  cardBg: "#ffffff",
-  cardBorder: "#e6e6e6",
-  text: "#1a1a1a",
-  muted: "#8a8a8a",
-  prompt: "#8a8a8a",
-  keyword: "#222222",
-  command: "#1a1a1a",
-  flag: "#737373",
-  string: "#5c5c5c",
-  number: "#9c9c9c",
-  header: "#1a1a1a",
-  jsonKey: "#4b4b4b",
-  jsonString: "#5c5c5c",
-  jsonNumber: "#9c9c9c",
-  work: "#1a1a1a",
-  side: "#7a7a7a",
-  personal: "#c2c2c2",
-  fallback: "#d8d8d8",
+  text: "#171717",
+  muted: "#777777",
+  prompt: "#9a9a9a",
+  hairline: "#e9e9e9",
+  panel: "#f6f6f6",
+  work: "#222222",
+  side: "#777777",
+  personal: "#bcbcbc",
+  fallback: "#d1d1d1",
 };
-
 const fontFamily =
   '"SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", monospace';
-
-const clamp = (n: number, min: number, max: number) =>
+const clamp = (n: number, min = 0, max = 1) =>
   Math.max(min, Math.min(max, n));
+const easeOut = cubicBezier(0.22, 1, 0.36, 1);
 
-function colorizeCommand(command: string): {
-  text: string;
-  colors: string[];
-} {
+function springProgress(
+  frame: number,
+  start: number,
+  options: { stiffness?: number; damping?: number; mass?: number } = {},
+) {
+  const elapsed = Math.max(0, frame - start) * (1000 / FPS);
+  const generator = motionSpring({
+    keyframes: [0, 1],
+    stiffness: options.stiffness ?? 180,
+    damping: options.damping ?? 24,
+    mass: options.mass ?? 1,
+  });
+  return clamp(Number(generator.next(elapsed).value ?? 0), -0.04, 1.04);
+}
+
+function colorizeCommand(command: string) {
   const chars: string[] = [];
   const colors: string[] = [];
   const regex = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|\S+/g;
@@ -56,17 +55,15 @@ function colorizeCommand(command: string): {
     }
     const token = match[0];
     let color = theme.text;
-    if (/^(npx|patty|curl|node|npm)$/.test(token)) color = theme.keyword;
-    else if (/^--?/.test(token)) color = theme.flag;
-    else if (/^(status|usage)$/.test(token)) color = theme.keyword;
+    if (/^--?/.test(token)) color = theme.muted;
     else if (
       token.startsWith('"') ||
       token.startsWith("'") ||
       /^https?:/.test(token)
     )
-      color = theme.string;
-    else if (token.includes("/")) color = theme.command;
-    else if (/^-?\d/.test(token)) color = theme.number;
+      color = "#5f5f5f";
+    else if (token.includes("/")) color = "#353535";
+    else if (/^-?\d/.test(token)) color = "#929292";
     for (const ch of token) {
       chars.push(ch);
       colors.push(color);
@@ -80,49 +77,45 @@ function colorizeCommand(command: string): {
   return { text: chars.join(""), colors };
 }
 
-export function colorJSON(json: string) {
+function colorJSON(json: string) {
   const parts = json
     .split(/("(?:[^"\\]|\\.)*")|(\{|\}|\[|\]|,|:)|(\s+)/)
     .filter(Boolean);
-  return parts.map((p, i) => {
-    if (/^"/.test(p))
+  return parts.map((part, i) => {
+    if (/^"/.test(part))
       return (
-        <span key={i} style={{ color: theme.jsonString }}>
-          {p}
+        <span key={i} style={{ color: "#595959" }}>
+          {part}
         </span>
       );
-    if (/^-?\d/.test(p))
+    if (/^-?\d/.test(part))
       return (
-        <span key={i} style={{ color: theme.jsonNumber }}>
-          {p}
+        <span key={i} style={{ color: "#8c8c8c" }}>
+          {part}
         </span>
       );
-    if (/[{}[\],:]/.test(p))
+    if (/[{}[\],:]/.test(part))
       return (
-        <span key={i} style={{ color: theme.muted }}>
-          {p}
+        <span key={i} style={{ color: "#a0a0a0" }}>
+          {part}
         </span>
       );
-    if (/true|false|null/.test(p))
+    if (/true|false|null/.test(part))
       return (
-        <span key={i} style={{ color: theme.keyword }}>
-          {p}
+        <span key={i} style={{ color: "#222222" }}>
+          {part}
         </span>
       );
-    return <span key={i}>{p}</span>;
+    return <span key={i}>{part}</span>;
   });
 }
 
 function colorHeader(line: string) {
   const idx = line.indexOf(":");
-  if (idx < 0) {
-    return <span style={{ color: theme.header, fontWeight: 600 }}>{line}</span>;
-  }
+  if (idx < 0) return <span style={{ fontWeight: 700 }}>{line}</span>;
   return (
     <>
-      <span style={{ color: theme.header, fontWeight: 600 }}>
-        {line.slice(0, idx)}
-      </span>
+      <span style={{ fontWeight: 700 }}>{line.slice(0, idx)}</span>
       <span>{line.slice(idx)}</span>
     </>
   );
@@ -135,19 +128,24 @@ const Typewriter: React.FC<{
   duration: number;
 }> = ({ text, colors, start, duration }) => {
   const frame = useCurrentFrame();
-  const progress = (frame - start) / duration;
-  const visible = clamp(Math.floor(progress * text.length), 0, text.length);
-  const showCursor = frame >= start && frame <= start + duration;
-  const blink = Math.floor(frame / 5) % 2 === 0;
+  const visible = clamp(
+    Math.floor(((frame - start) / duration) * text.length),
+    0,
+    text.length,
+  );
+  const active = frame >= start && frame <= start + duration;
+  const blink = Math.floor(frame / 6) % 2 === 0;
   return (
-    <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+    <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
       {Array.from({ length: visible }, (_, i) => (
         <span key={i} style={{ color: colors[i] }}>
           {text[i]}
         </span>
       ))}
-      {showCursor && blink && (
-        <span style={{ color: theme.text, marginLeft: 2, opacity: 0.7 }}>|</span>
+      {active && blink && (
+        <span style={{ color: theme.text, marginLeft: 2, opacity: 0.72 }}>
+          |
+        </span>
       )}
     </span>
   );
@@ -156,9 +154,9 @@ const Typewriter: React.FC<{
 const Prompt: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div
     style={{
+      marginBottom: 4,
       whiteSpace: "pre-wrap",
-      wordBreak: "break-word",
-      marginBottom: 2,
+      overflowWrap: "anywhere",
     }}
   >
     <span style={{ color: theme.prompt }}>$ </span>
@@ -166,18 +164,15 @@ const Prompt: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </div>
 );
 
-function appearStyle(frame: number, start: number, duration = 12) {
-  const o = interpolate(frame, [start, start + duration], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
+function appearStyle(frame: number, start: number, distance = 8) {
+  const progress = springProgress(frame, start, {
+    stiffness: 210,
+    damping: 25,
   });
-  const y = interpolate(frame, [start, start + duration], [6, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const eased = easeOut(clamp(progress));
   return {
-    opacity: o,
-    transform: `translateY(${y}px)`,
+    opacity: eased,
+    transform: `translateY(${transform(progress, [0, 1], [distance, 0])}px)`,
   };
 }
 
@@ -188,38 +183,32 @@ const StatusPanel: React.FC<{ start: number }> = ({ start }) => {
     { alias: "side", quota: 0.34, color: theme.side },
     { alias: "personal", quota: 0.08, color: theme.personal },
   ];
-  const barMax = 360;
+  const barMax = 310;
   return (
-    <div style={{ ...appearStyle(frame, start), margin: "6px 0 10px" }}>
-      {data.map((d, i) => {
-        const s = start + 6 + i * 6;
-        const width = interpolate(
-          frame,
-          [s, s + 25],
-          [0, d.quota * barMax],
-          { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.ease) }
-        );
-        const pct = Math.round(d.quota * 100);
+    <div style={{ ...appearStyle(frame, start), margin: "5px 0 10px" }}>
+      {data.map((item, i) => {
+        const progress = springProgress(frame, start + 5 + i * 5, {
+          stiffness: 155,
+          damping: 20,
+        });
+        const width = transform(progress, [0, 1], [0, item.quota * barMax]);
         return (
           <div
-            key={d.alias}
+            key={item.alias}
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 12,
-              marginBottom: 6,
-              height: 20,
+              gap: 10,
+              height: 22,
             }}
           >
-            <span style={{ width: 70, color: theme.text, fontSize: 14 }}>
-              {d.alias}
-            </span>
+            <span style={{ width: 68, color: theme.text }}>{item.alias}</span>
             <div
               style={{
                 width: barMax,
-                height: 12,
-                background: "#eeeeee",
-                borderRadius: 3,
+                height: 9,
+                background: theme.panel,
+                borderRadius: 99,
                 overflow: "hidden",
               }}
             >
@@ -227,24 +216,23 @@ const StatusPanel: React.FC<{ start: number }> = ({ start }) => {
                 style={{
                   width,
                   height: "100%",
-                  background: d.color,
-                  borderRadius: 3,
+                  background: item.color,
+                  borderRadius: 99,
                 }}
               />
             </div>
-            <span style={{ width: 42, color: theme.muted, fontSize: 14 }}>
-              {pct}%
+            <span style={{ width: 38, color: theme.muted, textAlign: "right" }}>
+              {Math.round(item.quota * 100)}%
             </span>
           </div>
         );
       })}
       <div
         style={{
-          marginLeft: 82,
+          marginLeft: 78,
           color: theme.text,
-          marginTop: 2,
-          fontSize: 14,
-          fontWeight: 500,
+          marginTop: 4,
+          fontWeight: 600,
         }}
       >
         → next request: work
@@ -255,201 +243,176 @@ const StatusPanel: React.FC<{ start: number }> = ({ start }) => {
 
 const UsagePanel: React.FC<{ start: number }> = ({ start }) => {
   const frame = useCurrentFrame();
-  const subTokens = 5;
-  const apiTokens = 0;
-  const barMax = 240;
-  const subStart = start + 6;
-  const subW = interpolate(
-    frame,
-    [subStart, subStart + 24],
-    [0, barMax],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.ease) }
-  );
-  const apiW = 0;
+  const barMax = 210;
+  const progress = springProgress(frame, start + 5, {
+    stiffness: 155,
+    damping: 20,
+  });
+  const subWidth = transform(progress, [0, 1], [0, barMax]);
+  const rows = [
+    {
+      label: "subs",
+      width: subWidth,
+      color: theme.work,
+      detail: "5 tokens · $0.000032",
+    },
+    {
+      label: "API fallback",
+      width: 0,
+      color: theme.fallback,
+      detail: "0 tokens · $0.000000",
+    },
+  ];
   return (
-    <div style={{ ...appearStyle(frame, start), margin: "6px 0 0" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          marginBottom: 6,
-          height: 20,
-        }}
-      >
-        <span style={{ width: 110, color: theme.text, fontSize: 14 }}>
-          subs
-        </span>
+    <div style={{ ...appearStyle(frame, start), marginTop: 5 }}>
+      {rows.map((row) => (
         <div
+          key={row.label}
           style={{
-            width: barMax,
-            height: 10,
-            background: "#eeeeee",
-            borderRadius: 3,
-            overflow: "hidden",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            height: 24,
           }}
         >
+          <span style={{ width: 94, color: theme.text }}>{row.label}</span>
           <div
             style={{
-              width: subW,
-              height: "100%",
-              background: theme.work,
-              borderRadius: 3,
+              width: barMax,
+              height: 9,
+              background: theme.panel,
+              borderRadius: 99,
+              overflow: "hidden",
             }}
-          />
+          >
+            <div
+              style={{
+                width: row.width,
+                height: "100%",
+                background: row.color,
+                borderRadius: 99,
+              }}
+            />
+          </div>
+          <span style={{ width: 160, color: theme.muted }}>{row.detail}</span>
         </div>
-        <span style={{ width: 170, color: theme.muted, fontSize: 14 }}>
-          {subTokens} tokens · $0.000032
-        </span>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          height: 20,
-        }}
-      >
-        <span style={{ width: 110, color: theme.text, fontSize: 14 }}>
-          API fallback
-        </span>
-        <div
-          style={{
-            width: barMax,
-            height: 10,
-            background: "#eeeeee",
-            borderRadius: 3,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              width: apiW,
-              height: "100%",
-              background: theme.fallback,
-              borderRadius: 3,
-            }}
-          />
-        </div>
-        <span style={{ width: 170, color: theme.muted, fontSize: 14 }}>
-          {apiTokens} tokens · $0.000000
-        </span>
-      </div>
+      ))}
     </div>
   );
 };
 
 export const TerminalDemo: React.FC = () => {
   const frame = useCurrentFrame();
-
   const c1 =
     "npx @puffle/pattystack --fake=work:0.71 --fake=side:0.34 --fake=personal:0.08";
   const c2 = "patty status";
   const c3 =
     'curl -s -i http://127.0.0.1:3210/v1/chat/completions -H "authorization: Bearer $KEY" -H "content-type: application/json" -d \'{"model":"gpt-5-codex","messages":[{"role":"user","content":"hello"}]}\'';
   const c4 = "patty usage";
-
   const c1col = colorizeCommand(c1);
   const c2col = colorizeCommand(c2);
   const c3col = colorizeCommand(c3);
   const c4col = colorizeCommand(c4);
 
   const C1_START = 0;
-  const C1_DUR = 60;
-  const O1_START = C1_START + C1_DUR + 10;
-
-  const C2_START = O1_START + 30;
+  const C1_DUR = 54;
+  const O1_START = 66;
+  const C2_START = 100;
   const C2_DUR = 14;
-  const O2_START = C2_START + C2_DUR + 10;
-
-  const C3_START = O2_START + 35;
-  const C3_DUR = 75;
-  const O3_START = C3_START + C3_DUR + 10;
-
-  const C4_START = O3_START + 30;
-  const C4_DUR = 14;
-  const O4_START = C4_START + C4_DUR + 10;
+  const O2_START = 124;
+  const C3_START = 195;
+  const C3_DUR = 66;
+  const O3_START = 265;
+  const C4_START = 286;
+  const C4_DUR = 12;
+  const O4_START = 314;
 
   const daemonJson =
     '{"listening":{"address":"127.0.0.1","port":3210},"apiKey":"cp_live_...","warning":"API key shown once; store it securely"}';
   const bodyJson =
     '{"id":"run_c9bd530cf7a55647f964","object":"chat.completion","model":"gpt-5-codex","choices":[{"index":0,"message":{"role":"assistant","content":"fake: hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}';
+  const cardProgress = springProgress(frame, 0, {
+    stiffness: 170,
+    damping: 23,
+  });
+  const bgShift = 50 + 8 * Math.sin(frame / 90);
 
   return (
     <AbsoluteFill
       style={{
-        background: theme.bg,
+        background: `radial-gradient(circle at ${bgShift}% 20%, #ffffff 0%, #f4f4f4 38%, #e7e7e7 100%)`,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         fontFamily,
-        fontSize: 15,
+        fontSize: 13,
         color: theme.text,
-        lineHeight: "24px",
+        lineHeight: "19px",
       }}
     >
       <Audio src={staticFile("piano.mp3")} volume={0.55} />
       <div
         style={{
-          width: 1180,
-          height: 660,
-          backgroundColor: theme.cardBg,
-          borderRadius: 14,
+          width: 1160,
+          height: 650,
+          background: "#fff",
+          border: `1px solid ${theme.hairline}`,
+          borderRadius: 18,
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "0 24px 80px rgba(0,0,0,0.10)",
+          boxShadow:
+            "0 30px 90px rgba(0,0,0,0.13), 0 3px 12px rgba(0,0,0,0.05)",
+          opacity: clamp(cardProgress),
+          transform: `scale(${transform(cardProgress, [0, 1], [0.965, 1])})`,
         }}
       >
         <div
           style={{
-            height: 30,
-            backgroundColor: "#f5f5f5",
-            borderBottom: `1px solid ${theme.cardBorder}`,
+            height: 36,
+            background: "linear-gradient(#fafafa, #f4f4f4)",
+            borderBottom: `1px solid ${theme.hairline}`,
             display: "flex",
             alignItems: "center",
-            padding: "0 12px",
-            gap: 8,
+            padding: "0 15px",
+            gap: 7,
             flexShrink: 0,
           }}
         >
-          <span
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              backgroundColor: "#d4d4d4",
-            }}
-          />
-          <span
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              backgroundColor: "#d4d4d4",
-            }}
-          />
-          <span
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              backgroundColor: "#d4d4d4",
-            }}
-          />
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: "50%",
+                background: i === 0 ? "#cfcfcf" : "#dfdfdf",
+              }}
+            />
+          ))}
           <span
             style={{
               marginLeft: 10,
-              fontSize: 12,
+              fontSize: 11,
               color: theme.muted,
               fontFamily: "sans-serif",
+              letterSpacing: 0.2,
             }}
           >
             ~ pattystack
           </span>
+          <span
+            style={{
+              marginLeft: "auto",
+              color: "#b0b0b0",
+              fontSize: 11,
+            }}
+          >
+            local operator console
+          </span>
         </div>
 
-        <div style={{ padding: "18px 24px", flex: 1, overflow: "hidden" }}>
+        <div style={{ padding: "20px 28px", flex: 1, overflow: "hidden" }}>
           <Prompt>
             <Typewriter
               text={c1col.text}
@@ -462,10 +425,10 @@ export const TerminalDemo: React.FC = () => {
           <pre
             style={{
               ...appearStyle(frame, O1_START),
-              margin: "4px 0 12px",
+              margin: "3px 0 10px",
               fontFamily,
               whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
+              overflowWrap: "anywhere",
             }}
           >
             {colorJSON(daemonJson)}
@@ -479,7 +442,6 @@ export const TerminalDemo: React.FC = () => {
               duration={C2_DUR}
             />
           </Prompt>
-
           <StatusPanel start={O2_START} />
 
           <Prompt>
@@ -490,14 +452,11 @@ export const TerminalDemo: React.FC = () => {
               duration={C3_DUR}
             />
           </Prompt>
-
-          <div
-            style={{ ...appearStyle(frame, O3_START), margin: "4px 0 12px" }}
-          >
-            <div style={{ color: theme.header, marginBottom: 2 }}>
+          <div style={{ ...appearStyle(frame, O3_START), margin: "3px 0 10px" }}>
+            <div style={{ color: theme.text, marginBottom: 2 }}>
               {colorHeader("HTTP/1.1 200 OK")}
             </div>
-            <div style={{ color: theme.header, marginBottom: 6 }}>
+            <div style={{ color: theme.text, marginBottom: 4 }}>
               {colorHeader("x-patty-sub: work")}
             </div>
             <pre
@@ -505,7 +464,7 @@ export const TerminalDemo: React.FC = () => {
                 margin: 0,
                 fontFamily,
                 whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
+                overflowWrap: "anywhere",
               }}
             >
               {colorJSON(bodyJson)}
@@ -520,7 +479,6 @@ export const TerminalDemo: React.FC = () => {
               duration={C4_DUR}
             />
           </Prompt>
-
           <UsagePanel start={O4_START} />
         </div>
       </div>
@@ -528,16 +486,14 @@ export const TerminalDemo: React.FC = () => {
   );
 };
 
-export const TerminalDemoComposition: React.FC = () => {
-  return (
-    <Composition
-      id="TerminalDemo"
-      component={TerminalDemo}
-      durationInFrames={DURATION}
-      fps={FPS}
-      width={1280}
-      height={720}
-      defaultProps={{}}
-    />
-  );
-};
+export const TerminalDemoComposition: React.FC = () => (
+  <Composition
+    id="TerminalDemo"
+    component={TerminalDemo}
+    durationInFrames={DURATION}
+    fps={FPS}
+    width={1280}
+    height={720}
+    defaultProps={{}}
+  />
+);
