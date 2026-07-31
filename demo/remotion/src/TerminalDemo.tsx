@@ -151,18 +151,25 @@ const Typewriter: React.FC<{
   );
 };
 
-const Prompt: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div
-    style={{
-      marginBottom: 4,
-      whiteSpace: "pre-wrap",
-      overflowWrap: "anywhere",
-    }}
-  >
-    <span style={{ color: theme.prompt }}>$ </span>
-    {children}
-  </div>
-);
+const Prompt: React.FC<{
+  children: React.ReactNode;
+  start: number;
+}> = ({ children, start }) => {
+  const frame = useCurrentFrame();
+  if (frame < start) return null;
+  return (
+    <div
+      style={{
+        marginBottom: 4,
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+      }}
+    >
+      <span style={{ color: theme.prompt }}>$ </span>
+      {children}
+    </div>
+  );
+};
 
 function appearStyle(frame: number, start: number, distance = 8) {
   const progress = springProgress(frame, start, {
@@ -178,6 +185,7 @@ function appearStyle(frame: number, start: number, distance = 8) {
 
 const StatusPanel: React.FC<{ start: number }> = ({ start }) => {
   const frame = useCurrentFrame();
+  if (frame < start) return null;
   const data = [
     { alias: "work", quota: 0.71, color: theme.work },
     { alias: "side", quota: 0.34, color: theme.side },
@@ -243,6 +251,7 @@ const StatusPanel: React.FC<{ start: number }> = ({ start }) => {
 
 const UsagePanel: React.FC<{ start: number }> = ({ start }) => {
   const frame = useCurrentFrame();
+  if (frame < start) return null;
   const barMax = 210;
   const progress = springProgress(frame, start + 5, {
     stiffness: 155,
@@ -413,7 +422,7 @@ export const TerminalDemo: React.FC = () => {
         </div>
 
         <div style={{ padding: "20px 28px", flex: 1, overflow: "hidden" }}>
-          <Prompt>
+          <Prompt start={C1_START}>
             <Typewriter
               text={c1col.text}
               colors={c1col.colors}
@@ -422,19 +431,21 @@ export const TerminalDemo: React.FC = () => {
             />
           </Prompt>
 
-          <pre
-            style={{
-              ...appearStyle(frame, O1_START),
-              margin: "3px 0 10px",
-              fontFamily,
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-            }}
-          >
-            {colorJSON(daemonJson)}
-          </pre>
+          {frame >= O1_START && (
+            <pre
+              style={{
+                ...appearStyle(frame, O1_START),
+                margin: "3px 0 10px",
+                fontFamily,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {colorJSON(daemonJson)}
+            </pre>
+          )}
 
-          <Prompt>
+          <Prompt start={C2_START}>
             <Typewriter
               text={c2col.text}
               colors={c2col.colors}
@@ -444,7 +455,7 @@ export const TerminalDemo: React.FC = () => {
           </Prompt>
           <StatusPanel start={O2_START} />
 
-          <Prompt>
+          <Prompt start={C3_START}>
             <Typewriter
               text={c3col.text}
               colors={c3col.colors}
@@ -452,26 +463,30 @@ export const TerminalDemo: React.FC = () => {
               duration={C3_DUR}
             />
           </Prompt>
-          <div style={{ ...appearStyle(frame, O3_START), margin: "3px 0 10px" }}>
-            <div style={{ color: theme.text, marginBottom: 2 }}>
-              {colorHeader("HTTP/1.1 200 OK")}
-            </div>
-            <div style={{ color: theme.text, marginBottom: 4 }}>
-              {colorHeader("x-patty-sub: work")}
-            </div>
-            <pre
-              style={{
-                margin: 0,
-                fontFamily,
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-              }}
+          {frame >= O3_START && (
+            <div
+              style={{ ...appearStyle(frame, O3_START), margin: "3px 0 10px" }}
             >
-              {colorJSON(bodyJson)}
-            </pre>
-          </div>
+              <div style={{ color: theme.text, marginBottom: 2 }}>
+                {colorHeader("HTTP/1.1 200 OK")}
+              </div>
+              <div style={{ color: theme.text, marginBottom: 4 }}>
+                {colorHeader("x-patty-sub: work")}
+              </div>
+              <pre
+                style={{
+                  margin: 0,
+                  fontFamily,
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {colorJSON(bodyJson)}
+              </pre>
+            </div>
+          )}
 
-          <Prompt>
+          <Prompt start={C4_START}>
             <Typewriter
               text={c4col.text}
               colors={c4col.colors}
