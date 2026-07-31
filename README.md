@@ -8,9 +8,9 @@ It also shows you where everything went: how much of each subscription you've us
 
 Three things it does **not** do: it doesn't run in the cloud (it runs on your machine, and only your machine can reach it), it doesn't touch your passwords or login tokens (the official Codex program handles signing in, exactly as it does today), and it doesn't save your prompts or the answers anywhere.
 
-![Pattystack in 20 seconds: three stacked subs plus an API-credit fallback, the router explaining its choice, a request routed and answered, and tokens metered per sub](docs/images/demo.webp)
+![Pattystack in 40 seconds: three stacked subs, the router choosing work, a chat completion request, a small burst, and the usage summary](demo/pattystack.gif)
 
-<sub>Three pretend subscriptions and a spare API key, running for real: how much of each is left, Patty saying which one it picked and why, the answer coming back, and the tokens counted. Run it yourself with `corepack pnpm demo` — no subscription needed.</sub>
+<sub>Three pretend subscriptions running for real: how much of each is left, Pattystack saying which one it picked, the answer coming back, and the tokens counted. Run it yourself with `make demo` — no subscription needed.</sub>
 
 ![Pattystack console: three stacked subs, router scores, a streamed run and per-sub token metering](docs/images/console.png)
 
