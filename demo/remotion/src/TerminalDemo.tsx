@@ -1,35 +1,37 @@
 import React from "react";
 import {
   AbsoluteFill,
+  Audio,
   Composition,
   Easing,
   interpolate,
+  staticFile,
   useCurrentFrame,
 } from "remotion";
 
 const FPS = 30;
-export const DURATION = 540;
+export const DURATION = 360;
 
 const theme = {
-  bg: "#0e0e0e",
-  cardBg: "#141414",
-  cardBorder: "#2a2a2a",
-  text: "#d4d4d4",
-  muted: "#7d7d7d",
-  prompt: "#4ec9b0",
-  keyword: "#c586c0",
-  command: "#9cdcfe",
-  flag: "#b5cea8",
-  string: "#ce9178",
-  number: "#b5cea8",
-  header: "#4fc1ff",
-  jsonKey: "#9cdcfe",
-  jsonString: "#ce9178",
-  jsonNumber: "#b5cea8",
-  work: "#4ec9b0",
-  side: "#dcdcaa",
-  personal: "#c586c0",
-  fallback: "#7d7d7d",
+  bg: "linear-gradient(155deg, #f7f7f7 0%, #e0e0e0 100%)",
+  cardBg: "#ffffff",
+  cardBorder: "#e6e6e6",
+  text: "#1a1a1a",
+  muted: "#8a8a8a",
+  prompt: "#8a8a8a",
+  keyword: "#222222",
+  command: "#1a1a1a",
+  flag: "#737373",
+  string: "#5c5c5c",
+  number: "#9c9c9c",
+  header: "#1a1a1a",
+  jsonKey: "#4b4b4b",
+  jsonString: "#5c5c5c",
+  jsonNumber: "#9c9c9c",
+  work: "#1a1a1a",
+  side: "#7a7a7a",
+  personal: "#c2c2c2",
+  fallback: "#d8d8d8",
 };
 
 const fontFamily =
@@ -114,11 +116,13 @@ export function colorJSON(json: string) {
 function colorHeader(line: string) {
   const idx = line.indexOf(":");
   if (idx < 0) {
-    return <span style={{ color: theme.header }}>{line}</span>;
+    return <span style={{ color: theme.header, fontWeight: 600 }}>{line}</span>;
   }
   return (
     <>
-      <span style={{ color: theme.header }}>{line.slice(0, idx)}</span>
+      <span style={{ color: theme.header, fontWeight: 600 }}>
+        {line.slice(0, idx)}
+      </span>
       <span>{line.slice(idx)}</span>
     </>
   );
@@ -133,8 +137,8 @@ const Typewriter: React.FC<{
   const frame = useCurrentFrame();
   const progress = (frame - start) / duration;
   const visible = clamp(Math.floor(progress * text.length), 0, text.length);
-  const showCursor = frame <= start + duration + 12;
-  const blink = Math.floor(frame / 6) % 2 === 0;
+  const showCursor = frame >= start && frame <= start + duration;
+  const blink = Math.floor(frame / 5) % 2 === 0;
   return (
     <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
       {Array.from({ length: visible }, (_, i) => (
@@ -143,7 +147,7 @@ const Typewriter: React.FC<{
         </span>
       ))}
       {showCursor && blink && (
-        <span style={{ color: theme.prompt, marginLeft: 1 }}>▋</span>
+        <span style={{ color: theme.text, marginLeft: 2, opacity: 0.7 }}>|</span>
       )}
     </span>
   );
@@ -162,12 +166,12 @@ const Prompt: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </div>
 );
 
-function appearStyle(frame: number, start: number, duration = 15) {
+function appearStyle(frame: number, start: number, duration = 12) {
   const o = interpolate(frame, [start, start + duration], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const y = interpolate(frame, [start, start + duration], [8, 0], {
+  const y = interpolate(frame, [start, start + duration], [6, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -188,10 +192,10 @@ const StatusPanel: React.FC<{ start: number }> = ({ start }) => {
   return (
     <div style={{ ...appearStyle(frame, start), margin: "6px 0 10px" }}>
       {data.map((d, i) => {
-        const s = start + 8 + i * 8;
+        const s = start + 6 + i * 6;
         const width = interpolate(
           frame,
-          [s, s + 35],
+          [s, s + 25],
           [0, d.quota * barMax],
           { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.ease) }
         );
@@ -207,12 +211,14 @@ const StatusPanel: React.FC<{ start: number }> = ({ start }) => {
               height: 20,
             }}
           >
-            <span style={{ width: 70, color: theme.text, fontSize: 14 }}>{d.alias}</span>
+            <span style={{ width: 70, color: theme.text, fontSize: 14 }}>
+              {d.alias}
+            </span>
             <div
               style={{
                 width: barMax,
                 height: 12,
-                background: "#252525",
+                background: "#eeeeee",
                 borderRadius: 3,
                 overflow: "hidden",
               }}
@@ -226,11 +232,21 @@ const StatusPanel: React.FC<{ start: number }> = ({ start }) => {
                 }}
               />
             </div>
-            <span style={{ width: 42, color: theme.muted, fontSize: 14 }}>{pct}%</span>
+            <span style={{ width: 42, color: theme.muted, fontSize: 14 }}>
+              {pct}%
+            </span>
           </div>
         );
       })}
-      <div style={{ marginLeft: 82, color: theme.work, marginTop: 2, fontSize: 14 }}>
+      <div
+        style={{
+          marginLeft: 82,
+          color: theme.text,
+          marginTop: 2,
+          fontSize: 14,
+          fontWeight: 500,
+        }}
+      >
         → next request: work
       </div>
     </div>
@@ -242,10 +258,10 @@ const UsagePanel: React.FC<{ start: number }> = ({ start }) => {
   const subTokens = 5;
   const apiTokens = 0;
   const barMax = 240;
-  const subStart = start + 8;
+  const subStart = start + 6;
   const subW = interpolate(
     frame,
-    [subStart, subStart + 30],
+    [subStart, subStart + 24],
     [0, barMax],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.ease) }
   );
@@ -261,12 +277,14 @@ const UsagePanel: React.FC<{ start: number }> = ({ start }) => {
           height: 20,
         }}
       >
-        <span style={{ width: 110, color: theme.text, fontSize: 14 }}>subs</span>
+        <span style={{ width: 110, color: theme.text, fontSize: 14 }}>
+          subs
+        </span>
         <div
           style={{
             width: barMax,
             height: 10,
-            background: "#252525",
+            background: "#eeeeee",
             borderRadius: 3,
             overflow: "hidden",
           }}
@@ -292,12 +310,14 @@ const UsagePanel: React.FC<{ start: number }> = ({ start }) => {
           height: 20,
         }}
       >
-        <span style={{ width: 110, color: theme.text, fontSize: 14 }}>API fallback</span>
+        <span style={{ width: 110, color: theme.text, fontSize: 14 }}>
+          API fallback
+        </span>
         <div
           style={{
             width: barMax,
             height: 10,
-            background: "#252525",
+            background: "#eeeeee",
             borderRadius: 3,
             overflow: "hidden",
           }}
@@ -335,20 +355,20 @@ export const TerminalDemo: React.FC = () => {
   const c4col = colorizeCommand(c4);
 
   const C1_START = 0;
-  const C1_DUR = 95;
-  const O1_START = C1_START + C1_DUR + 25;
+  const C1_DUR = 60;
+  const O1_START = C1_START + C1_DUR + 10;
 
-  const C2_START = O1_START + 50;
-  const C2_DUR = 18;
-  const O2_START = C2_START + C2_DUR + 15;
+  const C2_START = O1_START + 30;
+  const C2_DUR = 14;
+  const O2_START = C2_START + C2_DUR + 10;
 
-  const C3_START = O2_START + 80;
-  const C3_DUR = 130;
-  const O3_START = C3_START + C3_DUR + 15;
+  const C3_START = O2_START + 35;
+  const C3_DUR = 75;
+  const O3_START = C3_START + C3_DUR + 10;
 
-  const C4_START = O3_START + 40;
-  const C4_DUR = 18;
-  const O4_START = C4_START + C4_DUR + 15;
+  const C4_START = O3_START + 30;
+  const C4_DUR = 14;
+  const O4_START = C4_START + C4_DUR + 10;
 
   const daemonJson =
     '{"listening":{"address":"127.0.0.1","port":3210},"apiKey":"cp_live_...","warning":"API key shown once; store it securely"}';
@@ -358,7 +378,7 @@ export const TerminalDemo: React.FC = () => {
   return (
     <AbsoluteFill
       style={{
-        backgroundColor: theme.bg,
+        background: theme.bg,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -368,22 +388,23 @@ export const TerminalDemo: React.FC = () => {
         lineHeight: "24px",
       }}
     >
+      <Audio src={staticFile("piano.mp3")} volume={0.55} />
       <div
         style={{
           width: 1180,
           height: 660,
           backgroundColor: theme.cardBg,
-          border: `1px solid ${theme.cardBorder}`,
-          borderRadius: 10,
+          borderRadius: 14,
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
+          boxShadow: "0 24px 80px rgba(0,0,0,0.10)",
         }}
       >
         <div
           style={{
             height: 30,
-            backgroundColor: "#1a1a1a",
+            backgroundColor: "#f5f5f5",
             borderBottom: `1px solid ${theme.cardBorder}`,
             display: "flex",
             alignItems: "center",
@@ -397,7 +418,7 @@ export const TerminalDemo: React.FC = () => {
               width: 10,
               height: 10,
               borderRadius: "50%",
-              backgroundColor: "#ff5f57",
+              backgroundColor: "#d4d4d4",
             }}
           />
           <span
@@ -405,7 +426,7 @@ export const TerminalDemo: React.FC = () => {
               width: 10,
               height: 10,
               borderRadius: "50%",
-              backgroundColor: "#febc2e",
+              backgroundColor: "#d4d4d4",
             }}
           />
           <span
@@ -413,7 +434,7 @@ export const TerminalDemo: React.FC = () => {
               width: 10,
               height: 10,
               borderRadius: "50%",
-              backgroundColor: "#28c840",
+              backgroundColor: "#d4d4d4",
             }}
           />
           <span
@@ -470,7 +491,9 @@ export const TerminalDemo: React.FC = () => {
             />
           </Prompt>
 
-          <div style={{ ...appearStyle(frame, O3_START), margin: "4px 0 12px" }}>
+          <div
+            style={{ ...appearStyle(frame, O3_START), margin: "4px 0 12px" }}
+          >
             <div style={{ color: theme.header, marginBottom: 2 }}>
               {colorHeader("HTTP/1.1 200 OK")}
             </div>

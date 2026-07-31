@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "remotion studio src/index.ts",
-    "render:mp4": "remotion render src/index.ts TerminalDemo out/TerminalDemo.mp4 --muted",
+    "render:mp4": "remotion render src/index.ts TerminalDemo out/TerminalDemo.mp4",
     "render:gif": "remotion render src/index.ts TerminalDemo out/TerminalDemo.gif --codec=gif --every-nth-frame=2"
   },
   "dependencies": {
