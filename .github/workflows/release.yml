@@ -1,4 +1,4 @@
-# Publishes `codex-patty` to npm when a version tag is pushed. The suites run first,
+# Publishes `@puffle/pattystack` to npm when a version tag is pushed. The suites run first,
 # so a tag can never ship something CI would have rejected.
 name: release
 

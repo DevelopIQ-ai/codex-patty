@@ -1,4 +1,4 @@
-# Codex Patty
+# Pattystack
 
 **Put all your Codex subscriptions in one place, and let your tools use whichever one still has quota left.**
 
@@ -8,24 +8,24 @@ It also shows you where everything went: how much of each subscription you've us
 
 Three things it does **not** do: it doesn't run in the cloud (it runs on your machine, and only your machine can reach it), it doesn't touch your passwords or login tokens (the official Codex program handles signing in, exactly as it does today), and it doesn't save your prompts or the answers anywhere.
 
-![Codex Patty in 20 seconds: three stacked subs plus an API-credit fallback, the router explaining its choice, a request routed and answered, and tokens metered per sub](docs/images/demo.webp)
+![Pattystack in 20 seconds: three stacked subs plus an API-credit fallback, the router explaining its choice, a request routed and answered, and tokens metered per sub](docs/images/demo.webp)
 
 <sub>Three pretend subscriptions and a spare API key, running for real: how much of each is left, Patty saying which one it picked and why, the answer coming back, and the tokens counted. Run it yourself with `corepack pnpm demo` — no subscription needed.</sub>
 
-![Codex Patty console: three stacked subs, router scores, a streamed run and per-sub token metering](docs/images/console.png)
+![Pattystack console: three stacked subs, router scores, a streamed run and per-sub token metering](docs/images/console.png)
 
 ## Setup
 
 Copy the block below and give it to your coding agent (Codex, Claude Code, Cursor, aider — anything that can run commands). It will install Patty, check that it works using pretend subscriptions so none of your real ones are touched, and then stop and tell you the two steps only you can do.
 
 ````text
-Set up codex-patty (https://github.com/DevelopIQ-ai/codex-patty) on this machine for me.
+Set up @puffle/pattystack (https://github.com/DevelopIQ-ai/codex-patty) on this machine for me.
 
 1. Check `node -v` is >= 22.5 — the store uses `node:sqlite` and older Node fails with
    "No such built-in module: node:sqlite". If it is older, install Node 22 (nvm, volta,
    brew, whatever this machine already uses) and use it for everything below.
 2. Start it with three fake subs so nothing real is touched:
-       npx codex-patty --fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14
+       npx @puffle/pattystack --fake=work-sub:0.82:190 --fake=personal-sub:0.55:41 --fake=team-sub:0.31:14
    The daemon prints a one-time `cp_live_…` API key on its first line. Save it — it is
    shown once. It listens on http://127.0.0.1:3210 and nothing else can reach it.
 3. Prove it end to end with that key:
@@ -50,14 +50,14 @@ Rules: do not weaken the loopback default, do not log into any account on my beh
 do not put any API key in a file you commit.
 ````
 
-Prefer to do it yourself? It's two commands. Run `npx codex-patty --fake=work-sub:0.82 --fake=personal-sub:0.55`, then open <http://127.0.0.1:3210/> and paste in the key it printed. `--fake` makes up subscriptions that behave like real ones — you can watch it choose between them, stream an answer and count tokens without owning a single subscription. That is exactly what the animation above is.
+Prefer to do it yourself? It's two commands. Run `npx @puffle/pattystack --fake=work-sub:0.82 --fake=personal-sub:0.55`, then open <http://127.0.0.1:3210/> and paste in the key it printed. `--fake` makes up subscriptions that behave like real ones — you can watch it choose between them, stream an answer and count tokens without owning a single subscription. That is exactly what the animation above is.
 
 ## Use it with real subs
 
 You need the [Codex CLI](https://developers.openai.com/codex) installed, because that is the thing Patty signs in and talks to. If `codex` is on your PATH there is nothing to configure:
 
 ```sh
-npx codex-patty
+npx @puffle/pattystack
 ```
 
 If it lives somewhere else, point at it with `PATTY_CODEX_COMMAND=/path/to/codex`. Patty checks the version before it starts a subscription and refuses one it wasn't built against, because that connection changes between Codex releases and a mismatch fails in confusing ways later. `patty doctor` tells you which Codex it found.
@@ -93,17 +93,17 @@ Not supported yet: asking for several answers at once (`n>1`), logprobs, and ima
 ## Install and keep it running
 
 ```sh
-npm i -g codex-patty     # or just use npx
-codex-patty              # with no arguments, starts Patty and leaves it running
-codex-patty usage        # with an argument, runs a command and prints the answer
+npm i -g @puffle/pattystack     # or just use npx
+pattystack              # with no arguments, starts Patty and leaves it running
+pattystack usage        # with an argument, runs a command and prints the answer
 ```
 
 One small package with no other packages inside it contains everything: the program, the command line tool, and the web page. It is meant to stay running in the background, so let your operating system start it for you and restart it if it ever stops:
 
 ```ini
-# ~/.config/systemd/user/codex-patty.service   →  systemctl --user enable --now codex-patty
+# ~/.config/systemd/user/pattystack.service   →  systemctl --user enable --now pattystack
 [Service]
-ExecStart=%h/.local/share/npm/bin/codex-patty
+ExecStart=%h/.local/share/npm/bin/pattystack
 Environment=PATTY_DB_PATH=%h/.patty/patty.sqlite
 Restart=on-failure
 [Install]

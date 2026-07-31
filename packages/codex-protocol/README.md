@@ -5,8 +5,8 @@ This is the auditable subset used by Patty, generated from the official `@openai
 Generation was performed with the exact pinned CLI:
 
 ```sh
-/tmp/codex-patty-live-bin/node_modules/.bin/codex app-server generate-ts --out /tmp/codex-ts
-/tmp/codex-patty-live-bin/node_modules/.bin/codex app-server generate-json-schema --out /tmp/codex-schema
+/tmp/pattystack-live-bin/node_modules/.bin/codex app-server generate-ts --out /tmp/codex-ts
+/tmp/pattystack-live-bin/node_modules/.bin/codex app-server generate-json-schema --out /tmp/codex-schema
 node scripts/canonical-schema-digest.mjs /tmp/codex-schema/codex_app_server_protocol.v2.schemas.json
 ```
 

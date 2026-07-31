@@ -3,7 +3,7 @@ name: testing-patty-console
 description: How to build, run and manually test the @patty/daemon loopback daemon and its operator console (subs, routing, token usage metering) locally.
 ---
 
-# Testing the Codex Patty daemon + operator console
+# Testing the Pattystack daemon + operator console
 
 ## Toolchain (both steps are required — defaults fail)
 - Node **22.23+**: `source ~/.nvm/nvm.sh && nvm use 22`. The repo uses unflagged `node:sqlite`;
@@ -81,7 +81,7 @@ PATTY_PORT=3211 node apps/daemon/dist/src/main.js --fake=sub-a --fake=sub-b:0.4
   wired parameter directly (`GET /v1/runs?limit=2`) and say so rather than claiming a UI pass.
 - `/metrics` needs the bearer key (401 otherwise) and returns `text/plain; version=0.0.4`. Strongest assertion is
   cross-checking a label against the UI, e.g. `patty_key_tokens_total{key="puffle-prod"}` == that key's UI total.
-- Packaging: `corepack pnpm pack:npm` → `dist-npm` (no `node_modules`); `node dist-npm/bin/codex-patty.mjs` with no
+- Packaging: `corepack pnpm pack:npm` → `dist-npm` (no `node_modules`); `node dist-npm/bin/pattystack.mjs` with no
   args / `start` / `up` / `--…` starts the daemon, any other word (e.g. `usage`) delegates to the packed CLI with
   `PATTY_URL`/`PATTY_API_KEY`. Always give it its own `PATTY_PORT` + `PATTY_DB_PATH` so it cannot reuse the demo DB,
   and confirm the CLI output really came from that daemon (alias/run count).
