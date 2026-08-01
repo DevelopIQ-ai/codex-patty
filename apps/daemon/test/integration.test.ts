@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PattyDaemon, privateDirectory } from '../src/server.js';
 import type { FakeAdapter } from '../src/core.js';
+import type { ChatTool } from '@patty/contracts';
+import { spawn } from 'node:child_process';
 let server: Server | undefined;
 afterEach(async () => { await new Promise<void>(resolveClose => server?.close(() => resolveClose()) ?? resolveClose()); server = undefined; });
 describe('loopback HTTP API', () => {
@@ -522,6 +524,7 @@ describe('tool calling', () => {
       { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{"city":"Denver"}' } }] },
       { role: 'tool', tool_call_id: 'call_1', content: '' },
     ] }) });
+    /** An id from a turn Patty no longer holds is not resumable, so the request is served as a fresh one rather than refused. */
     expect(response.status).toBe(200);
   });
 
@@ -551,13 +554,81 @@ describe('tool calling', () => {
     expect(stored[0]!.data).not.toContain('get_weather');
   });
 
-  it('offers tools through the console path, and streams the calls to a late subscriber', async () => {
+  it('offers tools through the console path, and resumes the run when the caller answers the call', async () => {
     const { port, headers } = await boot();
     const accepted = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'weather in Denver?', chat: { messages: [{ role: 'user', content: 'weather in Denver?' }], tools } }) })).json() as { id: string };
-    const stream = await (await fetch(`http://127.0.0.1:${port}/v1/runs/${accepted.id}/events`, { headers })).text();
-    const events = stream.split('\n\n').flatMap(frame => { const line = frame.split('\n').find(part => part.startsWith('data: ')); return line ? [JSON.parse(line.slice(6)) as { type: string; data?: { toolCalls?: { function: { name: string } }[] } }] : []; });
-    const call = events.find(event => event.type === 'tool_calls');
-    expect(call?.data?.toolCalls?.[0]).toMatchObject({ function: { name: 'get_weather' } });
+    const events: { type: string; data?: { toolCalls?: { id: string; function: { name: string } }[]; text?: string } }[] = [];
+    const stream = await fetch(`http://127.0.0.1:${port}/v1/runs/${accepted.id}/events`, { headers });
+    const reader = stream.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let buffered = '', answered = false;
+    while (!events.some(event => event.type === 'completed')) {
+      const { value, done } = await reader.read(); if (done) break;
+      buffered += value;
+      const frames = buffered.split('\n\n'); buffered = frames.pop() ?? '';
+      for (const frame of frames) { const line = frame.split('\n').find(part => part.startsWith('data: ')); if (line) events.push(JSON.parse(line.slice(6))); }
+      const call = events.find(event => event.type === 'tool_calls')?.data?.toolCalls?.[0];
+      if (call && !answered) {
+        answered = true;
+        expect(call).toMatchObject({ function: { name: 'get_weather' } });
+        const resumed = await fetch(`http://127.0.0.1:${port}/v1/runs/${accepted.id}/tool-results`, { method: 'POST', headers, body: JSON.stringify({ results: [{ toolCallId: call.id, output: 'sunny' }] }) });
+        expect(resumed.status).toBe(202);
+      }
+    }
+    await reader.cancel();
+    expect(events.find(event => event.type === 'delta')?.data?.text).toContain('fake used get_weather: sunny');
+  });
+
+  /** The half Codex actually drives: the spawned server speaks MCP on stdio and every tool it publishes is the caller's, fetched over loopback. */
+  it('serves MCP over stdio from the spawned bridge server', async () => {
+    const { port, headers: _headers, daemon } = await boot();
+    const calls: { id: string; function: { name: string } }[] = [];
+    const session = daemon.bridge.open(tools as ChatTool[], call => { calls.push(call); setTimeout(() => daemon.bridge.settle(call.id, 'sunny'), 10); });
+    const child = spawn(session.command, session.args, { env: { ...process.env, PATTY_BRIDGE_URL: `http://127.0.0.1:${port}`, PATTY_BRIDGE_TOKEN: session.token }, stdio: 'pipe' });
+    const replies: Record<number, { result?: { tools?: { name: string }[]; content?: { text: string }[]; serverInfo?: { name: string } } }> = {};
+    child.stdout.on('data', data => { for (const line of String(data).split('\n').filter(Boolean)) { const message = JSON.parse(line) as { id: number; result?: { tools?: { name: string }[]; content?: { text: string }[]; serverInfo?: { name: string } } }; replies[message.id] = message; } });
+    const ask = async (id: number, method: string, params?: unknown) => { child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) })}\n`); for (let attempt = 0; attempt < 200 && !replies[id]; attempt++) await new Promise(resolve => setTimeout(resolve, 10)); return replies[id]!; };
+    try {
+      expect((await ask(1, 'initialize', { protocolVersion: '2024-11-05' })).result?.serverInfo?.name).toBe('patty');
+      expect((await ask(2, 'tools/list')).result?.tools).toEqual([{ name: 'get_weather', description: 'current weather', inputSchema: { type: 'object', properties: { city: { type: 'string' } } } }]);
+      expect((await ask(3, 'tools/call', { name: 'get_weather', arguments: { city: 'Denver' } })).result?.content?.[0]?.text).toBe('sunny');
+      expect(calls[0]).toMatchObject({ function: { name: 'get_weather' } });
+      expect(JSON.parse((calls[0] as unknown as { function: { arguments: string } }).function.arguments)).toEqual({ city: 'Denver' });
+    } finally { child.kill(); session.close(); }
+  });
+
+  it('refuses a tool result that does not belong to the run', async () => {
+    const { port, headers } = await boot();
+    const accepted = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'weather?', chat: { messages: [{ role: 'user', content: 'weather?' }], tools } }) })).json() as { id: string };
+    const response = await fetch(`http://127.0.0.1:${port}/v1/runs/${accepted.id}/tool-results`, { method: 'POST', headers, body: JSON.stringify({ results: [{ toolCallId: 'call_someone_else', output: 'sunny' }] }) });
+    expect(response.status).toBe(400);
+    expect((await response.json() as { error: { code: string } }).error.code).toBe('invalid_request');
+  });
+
+  it('carries the caller’s tool result back into the same turn and answers with it', async () => {
+    const { port, headers } = await boot();
+    const messages: unknown[] = [{ role: 'user', content: 'weather in Denver?' }];
+    const first = await (await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages, tools }) })).json() as { id: string; choices: { message: { tool_calls: { id: string; function: { name: string } }[] } }[] };
+    const call = first.choices[0]!.message.tool_calls[0]!;
+    messages.push({ role: 'assistant', content: null, tool_calls: first.choices[0]!.message.tool_calls }, { role: 'tool', tool_call_id: call.id, content: 'sunny, 21C' });
+    const second = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages, tools }) });
+    expect(second.status).toBe(200);
+    const body = await second.json() as { id: string; choices: { finish_reason: string; message: { content: string } }[] };
+    /** The same run, rejoined: the sub never lost the turn while the caller was running the function. */
+    expect(body.id).toBe(first.id);
+    expect(body.choices[0]!.finish_reason).toBe('stop');
+    expect(body.choices[0]!.message.content).toBe('fake used get_weather: sunny, 21C');
+  });
+
+  it('publishes the caller’s tools to the bridge only with that turn’s token', async () => {
+    const { port, headers, daemon } = await boot();
+    const opened = daemon.bridge.open([{ type: 'function', function: { name: 'get_weather', description: 'current weather', parameters: { type: 'object', properties: {} } } }], () => undefined);
+    const listed = await fetch(`http://127.0.0.1:${port}/internal/tool-bridge/tools`, { headers: { 'x-patty-bridge-token': opened.token } });
+    expect((await listed.json() as { tools: { name: string }[] }).tools[0]).toMatchObject({ name: 'get_weather' });
+    expect((await fetch(`http://127.0.0.1:${port}/internal/tool-bridge/tools`, { headers })).status).toBe(401);
+    expect((await fetch(`http://127.0.0.1:${port}/internal/tool-bridge/tools`, { headers: { 'x-patty-bridge-token': 'not-a-session' } })).status).toBe(400);
+    /** The bridge is not a way into the rest of the daemon. */
+    expect((await fetch(`http://127.0.0.1:${port}/internal/tool-bridge/../v1/usage`, { headers: { 'x-patty-bridge-token': opened.token } })).status).toBe(401);
+    opened.close();
   });
 
   it('refuses a console tool run when no stacked sub supports tools', async () => {

@@ -90,7 +90,7 @@ Word-by-word streaming (`stream=True`) works the same way it does with OpenAI, a
 
 **The rest of your request survives too.** Your system prompt stays the instructions for the turn rather than being glued onto the front of the question, `reasoning_effort` decides how hard the model thinks, and `temperature`, `max_tokens`, `stop` and `seed` are passed on to any subscription that accepts them (a ChatGPT subscription has no such dials, so it ignores them). Send a value that makes no sense and Patty says so rather than guessing.
 
-**Tool calling works too.** (Tool calling is how an AI asks your code to run a function — look up the weather, search a database — instead of just replying with text. It is how Cursor and most AI agents work.) Send `tools` exactly as you would to OpenAI. Patty only sends such a request to a subscription that can genuinely handle tools; if none of yours can, it says so clearly instead of quietly giving you an answer that ignores your tools.
+**Tool calling works too, on your subscriptions.** (Tool calling is how an AI asks your code to run a function — look up the weather, search a database — instead of just replying with text. It is how Cursor and most AI agents work.) Send `tools` exactly as you would to OpenAI: you get back a normal `tool_calls` answer, you run the function, and you send the result back as a normal `tool` message. Behind the scenes Patty hands your functions to the subscription as a tiny local tool server and keeps the half-finished turn waiting for your answer, so the model picks up where it left off instead of starting over.
 
 Not supported yet: asking for several answers at once (`n>1`), logprobs, and images.
 
