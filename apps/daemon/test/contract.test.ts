@@ -50,8 +50,13 @@ describe('official 0.145.0 app-server contract', () => {
     const thread = (await requests(dir)).find(request => request.method === 'thread/start')!;
     const Ajv = (await import('ajv')).default as unknown as new (options: { strict: boolean; validateFormats: boolean }) => { compile: (schema: object) => (data: unknown) => boolean };
     expect(new Ajv({ strict: false, validateFormats: false }).compile(await schema('ThreadStartParams'))(thread.params)).toBe(true);
-    const params = thread.params as { approvalPolicy?: string; config?: { mcp_servers?: { patty?: { command?: string; args?: string[]; env?: Record<string, string> } } } };
+    const params = thread.params as { approvalPolicy?: string; developerInstructions?: string; config?: { features?: Record<string, boolean>; mcp_servers?: { patty?: { command?: string; args?: string[]; env?: Record<string, string>; default_tools_approval_mode?: string } } } };
     expect(params.approvalPolicy).toBe('never');
+    /** Without approve the app-server cancels the model's call to the caller's own function; without the preamble the model never learns the function exists. */
+    expect(params.config?.mcp_servers?.patty?.default_tools_approval_mode).toBe('approve');
+    expect(params.config?.features).toMatchObject({ non_prefixed_mcp_tool_names: true });
+    expect(params.developerInstructions).toContain('get_weather');
+    expect(params.developerInstructions).toContain('tool_search');
     expect(params.config?.mcp_servers?.patty?.command).toBe(process.execPath);
     expect(params.config?.mcp_servers?.patty?.args?.[0]).toMatch(/mcp-bridge\.js$/);
     /** The one-turn session token is the bridge's whole authority: it is never a Patty API key. */

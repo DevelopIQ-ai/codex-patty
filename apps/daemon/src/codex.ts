@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import type { ChatResponseFormat, ChatToolCall, ChatTurn, PattyEvent, ProviderAdapter, Quota, TokenUsage, TurnOptions } from '@patty/contracts';
+import type { ChatResponseFormat, ChatTool, ChatToolCall, ChatTurn, PattyEvent, ProviderAdapter, Quota, TokenUsage, TurnOptions } from '@patty/contracts';
 import type { ToolBridge, ToolBridgeSession } from './tool-bridge.js';
 
 type Rpc = { id?: unknown; method?: unknown; params?: unknown; result?: unknown; error?: { message?: unknown } };
@@ -19,6 +19,19 @@ const tokenUsage = (breakdown: UsageBreakdown | undefined): TokenUsage | undefin
   const inputTokens = read(breakdown.inputTokens), outputTokens = read(breakdown.outputTokens);
   return { inputTokens, cachedInputTokens: read(breakdown.cachedInputTokens), outputTokens, reasoningOutputTokens: read(breakdown.reasoningOutputTokens), totalTokens: read(breakdown.totalTokens) || inputTokens + outputTokens };
 };
+/** MCP tool names reach the model as the caller wrote them, rather than namespaced by the server that publishes them. */
+export const bridgeFeatures = { non_prefixed_mcp_tool_names: true } as const;
+/**
+ * The CLI defers MCP tools behind a search step and keeps them out of the model's tool list, which
+ * is sensible for a person adding a dozen servers and wrong for an API caller offering three
+ * functions it expects to be used. Naming them and saying how to reach them is what makes the
+ * difference between a tool call and a plausible answer invented from a web search.
+ */
+export const bridgePreamble = (tools: ChatTool[]) =>
+  ['The caller of this turn published these functions on the MCP server named patty:',
+   ...tools.map(tool => `- ${tool.function.name}${tool.function.description ? `: ${tool.function.description}` : ''}`),
+   'They are not in your tool list until you load them: call tool_search for a name above, then call the function itself.',
+   'Prefer them over your own tools and over answering from memory or the web — for this caller they are the only accepted source, and an answer produced without them is wrong even when it is accurate.'].join('\n');
 const approvalMethods = new Set(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'applyPatchApproval', 'execCommandApproval']);
 /**
  * The app-server constrains a turn's final message with a JSON Schema, which is exactly what
@@ -95,13 +108,17 @@ export class CodexAppServerAdapter extends EventEmitter implements ProviderAdapt
   async waitForAccount(timeoutMs = 30_000) { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const result = await this.account(); if (result.account) return result; await new Promise(resolve => setTimeout(resolve, 500)); } throw new Error('account_login_not_ready'); }
   /** A subscription can serve the caller's functions only when a bridge is there to publish them, so the capability follows the bridge rather than the provider. */
   async snapshot() { await this.waitForAccount(); const models = await this.rpc('model/list', {}) as { data: { model?: string; id?: string }[] }; const limits = await this.rpc('account/rateLimits/read') as { rateLimits: { primary?: RateWindow | null; secondary?: RateWindow | null } }; return { models: models.data.map(model => model.model ?? model.id).filter((model): model is string => Boolean(model)), capabilities: this.bridge ? ['tools'] : [], quota: this.quota(limits.rateLimits) }; }
-  async createThread(model: string, options?: TurnOptions, session?: ToolBridgeSession) { return (await this.rpc('thread/start', { model, ephemeral: true, ...(options?.instructions ? { developerInstructions: options.instructions } : {}), ...(session ? { approvalPolicy: 'never', config: { mcp_servers: { patty: { command: session.command, args: session.args, env: session.env } } } } : {}) }) as { thread: { id: string } }).thread.id; }
+  async createThread(model: string, options?: TurnOptions, session?: ToolBridgeSession, tools?: ChatTool[]) {
+    /** A bridged turn's rules are the caller's instructions plus how to reach the caller's functions; without the second part the model cannot see them, and without approve every call to them is cancelled unanswered. */
+    const instructions = [options?.instructions, session && tools?.length ? bridgePreamble(tools) : undefined].filter(Boolean).join('\n\n');
+    return (await this.rpc('thread/start', { model, ephemeral: true, ...(instructions ? { developerInstructions: instructions } : {}), ...(session ? { approvalPolicy: 'never', config: { features: bridgeFeatures, mcp_servers: { patty: { command: session.command, args: session.args, env: session.env, default_tools_approval_mode: 'approve' } } } } : {}) }) as { thread: { id: string } }).thread.id;
+  }
   async run(threadId: string | undefined, model: string, input: string, emit: (event: PattyEvent) => void, turn?: ChatTurn, options?: TurnOptions) {
     /** Tools live on the thread's MCP config, so a tool-bearing turn opens its own ephemeral thread rather than borrowing one that was started without the bridge. */
     let turnIdSoFar: string | undefined; const queuedCalls: ChatToolCall[] = [];
     const announce = (call: ChatToolCall) => { if (turnIdSoFar) emit({ version: 1, type: 'tool_calls', runId: turnIdSoFar, data: { toolCalls: [call], awaiting: true } }); else queuedCalls.push(call); };
     const session = turn?.tools?.length && this.bridge ? this.bridge.open(turn.tools, announce) : undefined;
-    if (session) { const own = await this.createThread(model, options, session); const started = await this.startTurn(own, model, input, emit, options, undefined, session); turnIdSoFar = started.turnId; for (const call of queuedCalls.splice(0)) announce(call); return started; }
+    if (session) { const own = await this.createThread(model, options, session, turn?.tools); const started = await this.startTurn(own, model, input, emit, options, undefined, session); turnIdSoFar = started.turnId; for (const call of queuedCalls.splice(0)) announce(call); return started; }
     return this.startTurn(threadId ?? await this.createThread(model, options), model, input, emit, options, threadId);
   }
   private async startTurn(activeThreadId: string, model: string, input: string, emit: (event: PattyEvent) => void, options?: TurnOptions, threadId?: string, session?: ToolBridgeSession) { const outputSchema = codexOutputSchema(options?.responseFormat); /** A thread the caller opened earlier already carries its own developer instructions, so this turn's rules ride along with the prompt rather than silently replacing them. */ const text = threadId && options?.instructions ? `${options.instructions}\n\n${input}` : input; const result = await this.rpc('turn/start', { threadId: activeThreadId, model, input: [{ type: 'text', text, text_elements: [] }], ...(outputSchema ? { outputSchema } : {}), ...(options?.reasoningEffort ? { effort: options.reasoningEffort } : {}) }) as { turn: { id: string } }; this.turns.set(result.turn.id, { threadId: activeThreadId, emit }); if (session) this.bridged.set(result.turn.id, session); const legacy = this.earlyApprovalsByThread.get(activeThreadId) ?? []; this.earlyApprovalsByThread.delete(activeThreadId); for (const approval of legacy) { approval.turnId = result.turn.id; this.approvals.set(String(approval.requestId), approval); emit({ version: 1, type: 'approval_required', runId: result.turn.id, data: { approvalId: String(approval.requestId) } }); } let terminal = false; for (const message of this.earlyEvents.get(result.turn.id) ?? []) { if ('approval' in message) { this.approvals.set(String(message.approval.requestId), message.approval); emit({ version: 1, type: 'approval_required', runId: result.turn.id, data: { approvalId: String(message.approval.requestId) } }); } else { emit(message); terminal ||= message.type === 'completed' || message.type === 'failed' || message.type === 'cancelled'; } } if (terminal) this.clearTurn(result.turn.id); else this.earlyEvents.delete(result.turn.id); return { turnId: result.turn.id }; }
