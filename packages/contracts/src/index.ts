@@ -56,6 +56,19 @@ export type CostBreakdown = { estimatedCostUsd: number; unpricedRuns: number };
  */
 export type CostSummary = CostBreakdown & { subscriptionUsd: number; apiUsd: number; unpricedModels: string[] };
 export type UsageReport = { totals: UsageTotals & { cost: CostBreakdown }; accounts: (AccountUsage & { tier: AccountTier; cost: CostBreakdown })[]; keys: (KeyUsage & { cost: CostBreakdown })[]; runs: (RunUsage & { estimatedCostUsd: number | null })[]; cost: CostSummary };
+/**
+ * The short-lived half of a subscription credential: enough for a caller to drive its own Codex
+ * process as that subscription, and nothing more. The refresh token stays in Patty, so a lease can
+ * be revoked and cannot be renewed by whoever holds it.
+ */
+export type LeasedCredential = { accessToken: string; chatgptAccountId: string; chatgptPlanType: string | null };
+/**
+ * A sub lent to a caller that runs Codex itself. An agent driving the CLI directly — for its own
+ * threads, tools and streaming — cannot be served by an OpenAI-shaped endpoint, so it borrows the
+ * subscription instead of the answer. Patty cannot meter those turns, so the lease holds one of the
+ * sub's run slots for as long as it lives and disappears on its own when the holder stops renewing.
+ */
+export type CredentialLease = { id: string; accountId: string; alias: string; holder: string | null; issuedAt: string; expiresAt: string; models: string[] };
 export type PattyErrorCode = 'invalid_request' | 'unauthorized' | 'idempotency_conflict' | 'no_eligible_account' | 'rate_limited' | 'model_unavailable' | 'account_reconnect_required' | 'account_cooldown' | 'approval_timeout' | 'upstream_overloaded' | 'upstream_failed' | 'protocol_incompatible';
 export type PattyError = { error: { code: PattyErrorCode; message: string; requestId: string; retryable: boolean; retryAfterMs?: number } };
 
@@ -70,6 +83,8 @@ export interface ProviderAdapter {
   interrupt(providerTurnId: string): Promise<void>;
   approve(approvalId: string, approved: boolean): Promise<void>;
   logout(): Promise<void>;
+  /** Mints the sub's current access token, refreshing it first. Absent on providers with no subscription to lend, such as an API key. */
+  credential?(): Promise<LeasedCredential>;
   health(): Promise<boolean>;
   /** Stops worker resources without reading or deleting Codex-managed credentials. */
   shutdown(): Promise<void>;

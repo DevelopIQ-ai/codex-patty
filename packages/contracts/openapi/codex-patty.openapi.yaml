@@ -11,6 +11,7 @@ components:
       scheme: bearer
   parameters:
     AccountId: { name: id, in: path, required: true, schema: { type: string } }
+    LeaseId: { name: id, in: path, required: true, schema: { type: string } }
     RunId: { name: id, in: path, required: true, schema: { type: string } }
     ThreadId: { name: id, in: path, required: true, schema: { type: string } }
     KeyId: { name: id, in: path, required: true, schema: { type: string } }
@@ -210,6 +211,10 @@ paths:
   /v1/accounts/{id}: { delete: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'204': {description: Removed}} } }
   /v1/accounts/{id}/refresh: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'200': {description: Snapshot}} } }
   /v1/accounts/{id}/login/cancel: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'202': {description: Cancelled}} } }
+  /v1/subscriptions/lease: { post: { security: [{PattyKey: []}], requestBody: {content: {application/json: {schema: {type: object, properties: {model: {type: string, description: 'Only lend a sub that serves this model'}, ttlSeconds: {type: integer, minimum: 30, default: 300, description: 'Capped by PATTY_LEASE_MAX_SECONDS; renew for longer work'}, holder: {type: string, description: 'Free-form label for the borrower, shown to the operator'}}}}}}, responses: {'201': {description: 'Lease metadata plus a short-lived ChatGPT access token for a stacked subscription. The refresh token never leaves Patty, the lease holds one of the sub''s run slots, and turns run under it are not metered by Patty.'}, '503': {description: 'No sub can be lent right now'}} } }
+  /v1/subscriptions/leases: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Live leases, without credentials'}} } }
+  /v1/subscriptions/leases/{id}: { get: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/LeaseId'}], responses: {'200': {description: Lease}} }, delete: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/LeaseId'}], responses: {'204': {description: 'Sub handed back'}} } }
+  /v1/subscriptions/leases/{id}/renew: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/LeaseId'}], requestBody: {content: {application/json: {schema: {type: object, properties: {ttlSeconds: {type: integer, minimum: 30, default: 300}}}}}}, responses: {'200': {description: 'Extended lease with a freshly minted access token'}, '404': {description: 'Lease unknown or already expired'}} } }
   /v1/threads:
     post:
       summary: Open a thread pinned to one sub

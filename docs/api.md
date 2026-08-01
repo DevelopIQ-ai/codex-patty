@@ -144,6 +144,28 @@ Live SSE subscribers receive normalized provider deltas while connected. Patty p
 
 The daemon writes one JSON line per request to stdout: timestamp, request id, method, path (without the query string), status, duration, and the routed sub and run when there was one. Prompts, outputs, key secrets and query values are never logged. Set `PATTY_LOG_LEVEL=silent` to turn it off.
 
+## Lending a sub to an agent that drives Codex itself
+
+Some agents cannot be served by an endpoint at all: they run the Codex CLI or app-server themselves because they need their own threads, their own MCP servers, steering and interrupts. For those, Patty lends the subscription instead of the answer.
+
+```sh
+curl -sX POST localhost:3210/v1/subscriptions/lease -H "authorization: Bearer $PATTY_KEY" \
+  -d '{"model":"gpt-5.4","ttlSeconds":600,"holder":"my-agent"}'
+# {"id":"lease_...","alias":"work-sub","expiresAt":"...","models":["gpt-5.4",...],
+#  "credential":{"accessToken":"...","chatgptAccountId":"...","chatgptPlanType":"plus"}}
+```
+
+The caller feeds that credential to its own Codex process — `codex app-server` takes exactly this triple via `account/login/start` with `chatgptAuthTokens` — and runs whatever turns it likes as that subscription. Patty picks which sub to lend the same way it picks one to call: primaries before fallbacks, healthiest and least-exhausted first, and only subs that serve the model you asked for.
+
+What a lease deliberately is not:
+
+- **Not the account.** Only the access token crosses the wire. The refresh token stays in the sub's Codex home, so the loan ends on Patty's schedule and cannot be extended by whoever holds it. `POST /v1/subscriptions/leases/{id}/renew` mints a fresh token and extends the window; `DELETE` hands the sub back early.
+- **Not free capacity.** A live lease holds one of the sub's run slots, so the router already knows that sub is busier than its own run count suggests. A holder that dies stops renewing and the sub comes back on its own within the window, and a daemon restart drops every lease, because a borrower cannot outlive the daemon it borrowed from.
+- **Not metered.** Patty never sees those turns, so they appear in no usage report — `patty_sub_credential_leases` in `/metrics` is the only place they show up. Quota still moves, so `/v1/router/status` reflects the spend at the next snapshot.
+- **Not for API-key subs.** A stacked OpenAI-compatible key is not a subscription and has nothing to lend; a lease request never hands out the operator's provider key.
+
+Default TTL is 300s, minimum 30s, capped by `PATTY_LEASE_MAX_SECONDS` (default 3600).
+
 ## Stacking non-Codex providers
 
 `POST /v1/accounts/openai-compatible {"alias":"together","baseUrl":"https://api.together.xyz/v1","apiKeyEnv":"TOGETHER_API_KEY"}` stacks any OpenAI-compatible endpoint — an OpenAI or OpenRouter key, Together/Fireworks, a local Ollama or vLLM — next to your Codex subs behind the same router, metering, failover and OpenAI-compatible surface.

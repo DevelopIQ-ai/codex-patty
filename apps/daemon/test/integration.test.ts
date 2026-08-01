@@ -860,3 +860,50 @@ describe('model aliases', () => {
     expect(history.data.find(record => record.runId === run.id)?.model).toBe('gpt-5-codex');
   });
 });
+
+describe('lending a subscription to a caller that drives Codex itself', () => {
+  it('hands out a short-lived credential, renews it, and takes the sub back on release', async () => {
+    const daemon = new PattyDaemon(); const sub = daemon.addFakeAccount('lend'); server = await daemon.listen(); const port = (server.address() as { port: number }).port; const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    expect((await fetch(`http://127.0.0.1:${port}/v1/subscriptions/lease`, { method: 'POST', body: JSON.stringify({}) })).status).toBe(401);
+    const response = await fetch(`http://127.0.0.1:${port}/v1/subscriptions/lease`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', ttlSeconds: 60, holder: 'puffle-agent' }) });
+    expect(response.status).toBe(201);
+    const lease = await response.json() as { id: string; alias: string; expiresAt: string; models: string[]; credential: { accessToken: string; chatgptAccountId: string; chatgptPlanType: string | null } };
+    expect(lease).toMatchObject({ alias: 'lend', models: ['gpt-5-codex'], credential: { chatgptAccountId: 'fake-chatgpt-account', chatgptPlanType: 'plus' } });
+    expect(lease.credential.accessToken).toMatch(/^fake-access-/);
+    /** The sub is doing work Patty cannot see, so routing must already know it is busier than it looks. */
+    expect(daemon.store.account(sub.id)?.activeRuns).toBe(1);
+    const listed = await (await fetch(`http://127.0.0.1:${port}/v1/subscriptions/leases`, { headers })).json() as { data: { id: string; holder: string | null; credential?: unknown }[] };
+    expect(listed.data).toHaveLength(1); expect(listed.data[0]).toMatchObject({ id: lease.id, holder: 'puffle-agent' }); expect(listed.data[0]).not.toHaveProperty('credential');
+    const renewed = await (await fetch(`http://127.0.0.1:${port}/v1/subscriptions/leases/${lease.id}/renew`, { method: 'POST', headers, body: JSON.stringify({ ttlSeconds: 900 }) })).json() as { expiresAt: string; credential: { accessToken: string } };
+    expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.parse(lease.expiresAt));
+    expect(renewed.credential.accessToken).not.toBe(lease.credential.accessToken);
+    expect(await (await fetch(`http://127.0.0.1:${port}/metrics`, { headers })).text()).toContain('patty_sub_credential_leases{sub="lend"} 1');
+    expect((await fetch(`http://127.0.0.1:${port}/v1/subscriptions/leases/${lease.id}`, { method: 'DELETE', headers })).status).toBe(204);
+    expect(daemon.store.account(sub.id)?.activeRuns).toBe(0);
+    expect((await fetch(`http://127.0.0.1:${port}/v1/subscriptions/leases/${lease.id}/renew`, { method: 'POST', headers, body: JSON.stringify({}) })).status).toBe(404);
+  });
+  it('spends a primary subscription before a fallback one and never lends an API key', async () => {
+    const daemon = new PattyDaemon(); daemon.addFakeAccount('spillover', ['gpt-5-codex'], 1, 'fallback'); const primary = daemon.addFakeAccount('stacked'); server = await daemon.listen(); const port = (server.address() as { port: number }).port; const headers = { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' };
+    const lease = await (await fetch(`http://127.0.0.1:${port}/v1/subscriptions/lease`, { method: 'POST', headers, body: JSON.stringify({}) })).json() as { alias: string; accountId: string };
+    expect(lease).toMatchObject({ alias: 'stacked', accountId: primary.id });
+    process.env.PATTY_TEST_PROVIDER_KEY = 'sk-not-a-real-key';
+    const models = (async () => new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }), { headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const keyOnly = new PattyDaemon(); await keyOnly.addOpenAiCompatibleAccount('byok', 'https://api.example.invalid/v1', 'PATTY_TEST_PROVIDER_KEY', models);
+    /** An API key is not a subscription: there is nothing to lend, so the caller is told the stack is empty rather than handed the operator's key. */
+    expect(keyOnly.leasable()).toEqual([]);
+    await expect(keyOnly.leaseSubscription(60_000)).rejects.toThrow('no_eligible_account');
+  });
+  it('answers a lease request with a retryable 503 when every sub is out of quota', async () => {
+    const daemon = new PattyDaemon(); const sub = daemon.addFakeAccount('dry'); daemon.store.exhaustQuota(sub.id); server = await daemon.listen(); const port = (server.address() as { port: number }).port;
+    const response = await fetch(`http://127.0.0.1:${port}/v1/subscriptions/lease`, { method: 'POST', headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, body: JSON.stringify({}) });
+    expect(response.status).toBe(503);
+    expect(await response.json() as { error: { code: string; retryable: boolean } }).toMatchObject({ error: { code: 'no_eligible_account', retryable: true } });
+  });
+  it('never writes a lent token to the database or the audit log', async () => {
+    const daemon = new PattyDaemon(); daemon.addFakeAccount('secret'); const lease = await daemon.leaseSubscription(60_000, undefined, 'holder');
+    const dump = (daemon.store.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(table => JSON.stringify(daemon.store.db.prepare(`SELECT * FROM ${table.name}`).all())).join('');
+    expect(lease.credential.accessToken).toMatch(/^fake-access-/);
+    expect(dump).not.toContain(lease.credential.accessToken);
+    expect(dump).not.toContain('fake-chatgpt-account');
+  });
+});
