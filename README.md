@@ -92,6 +92,14 @@ Word-by-word streaming (`stream=True`) works the same way it does with OpenAI, a
 
 **Tool calling works too, on your subscriptions.** (Tool calling is how an AI asks your code to run a function — look up the weather, search a database — instead of just replying with text. It is how Cursor and most AI agents work.) Send `tools` exactly as you would to OpenAI: you get back a normal `tool_calls` answer, you run the function, and you send the result back as a normal `tool` message. Behind the scenes Patty hands your functions to the subscription as a tiny local tool server and keeps the half-finished turn waiting for your answer, so the model picks up where it left off instead of starting over.
 
+**Both doors are open, and you can keep your own model names.** Newer clients (the OpenAI SDKs, the Vercel AI SDK) talk to `/v1/responses` rather than `/v1/chat/completions`; Patty answers both, with the same routing behind them. And if your app asks for a model your subscriptions do not serve, tell Patty who should take it:
+
+```sh
+PATTY_MODEL_ALIASES='{"gpt-5-nano":"gpt-5-codex","*":"gpt-5-codex"}'
+```
+
+`*` catches anything you did not name. A model your stack really does serve is never redirected, so this quietly stops mattering the day you stack one that does.
+
 Not supported yet: asking for several answers at once (`n>1`), logprobs, and images.
 
 ## Install and keep it running
