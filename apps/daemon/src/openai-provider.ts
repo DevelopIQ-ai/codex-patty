@@ -1,4 +1,4 @@
-import type { ChatToolCall, ChatTurn, PattyEvent, ProviderAdapter, Quota, TokenUsage } from '@patty/contracts';
+import type { ChatToolCall, ChatTurn, PattyEvent, ProviderAdapter, Quota, TokenUsage, TurnOptions } from '@patty/contracts';
 
 /**
  * Any OpenAI-compatible endpoint — an OpenAI or OpenRouter key, a Together/Fireworks
@@ -61,7 +61,7 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
   /** Stateless provider: the thread is Patty's, and history is replayed by the caller. */
   async createThread() { return `oai_${++this.turnSeq}`; }
 
-  async run(_threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void, turn?: ChatTurn) {
+  async run(_threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void, turn?: ChatTurn, options?: TurnOptions) {
     const turnId = `oai_turn_${++this.turnSeq}`;
     const controller = new AbortController();
     this.controllers.set(turnId, controller);
@@ -74,6 +74,7 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
         messages: turn?.messages?.length ? turn.messages : [{ role: 'user', content: input }],
         ...(turn?.tools?.length ? { tools: turn.tools } : {}),
         ...(turn?.toolChoice !== undefined ? { tool_choice: turn.toolChoice } : {}),
+        ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
       }),
     });
     void this.pump(response, turnId, onEvent).finally(() => this.controllers.delete(turnId));
