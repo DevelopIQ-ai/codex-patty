@@ -7,7 +7,7 @@ import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effec
 import { estimateCost, loadPrices } from '../src/pricing.js';
 import { codexOutputSchema } from '../src/codex.js';
 import { writeFileSync } from 'node:fs';
-import { PattyDaemon, parseResponseFormat } from '../src/server.js';
+import { PattyDaemon, parseReasoningEffort, parseResponseFormat, parseSampling, splitConversation } from '../src/server.js';
 const account = (id: string, remaining = 1, tier: Account['tier'] = 'primary'): Account => ({ id, alias: id, tier, state: 'ready', models: ['gpt-5-codex'], quota: { remaining, observedAt: now() }, health: 1, activeRuns: 0 });
 const wait = () => new Promise(resolve => setTimeout(resolve, 0));
 class ControlledAdapter implements ProviderAdapter {
@@ -337,5 +337,36 @@ describe('structured output plumbing', () => {
     const runId = await coordinator.start({ model: 'gpt-5-codex', input: 'x', responseFormat });
     await coordinator.collect(runId);
     expect(seen).toEqual([responseFormat]);
+  });
+});
+
+describe('roles and per-turn knobs', () => {
+  it('separates the turn’s rules from the conversation', () => {
+    expect(splitConversation([{ role: 'system', content: 'be terse' }, { role: 'developer', content: [{ text: 'in French' }] }, { role: 'user', content: 'hi' }])).toEqual({ instructions: 'be terse\n\nin French', input: 'hi' });
+    expect(splitConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hey' }])).toEqual({ instructions: undefined, input: 'user: hi\n\nassistant: hey' });
+  });
+  it('accepts the sampling knobs OpenAI clients send and refuses the out-of-range ones', () => {
+    expect(parseSampling({})).toBeUndefined();
+    expect(parseSampling({ temperature: 0.2, top_p: 1, max_completion_tokens: 64, stop: 'END', seed: 7 })).toEqual({ temperature: 0.2, topP: 1, maxOutputTokens: 64, stop: ['END'], seed: 7 });
+    // `max_completion_tokens` is the newer spelling and wins when a client sends both.
+    expect(parseSampling({ max_tokens: 10, max_completion_tokens: 20 })).toEqual({ maxOutputTokens: 20 });
+    for (const bad of [{ temperature: -1 }, { temperature: 3 }, { top_p: 1.5 }, { max_tokens: 0 }, { max_tokens: 1.5 }, { seed: 0.5 }, { stop: [''] }, { stop: ['a', 'b', 'c', 'd', 'e'] }]) expect(() => parseSampling(bad), JSON.stringify(bad)).toThrow('invalid_request');
+  });
+  it('takes whatever effort the model advertises but not free text', () => {
+    expect(parseReasoningEffort(undefined)).toBeUndefined();
+    expect(parseReasoningEffort('minimal')).toBe('minimal');
+    for (const bad of ['', 'HIGH', 'think very hard', 'x'.repeat(33)]) expect(() => parseReasoningEffort(bad), bad).toThrow('invalid_request');
+  });
+  it('replays instructions and knobs onto the next sub when the first one fails', async () => {
+    const store = new Store(); const adapters = new Map<string, ProviderAdapter>();
+    const first = account('first'), second = account('second');
+    store.addAccount(first); store.addAccount(second);
+    const seen: unknown[] = [];
+    class Recording extends FakeAdapter { override async run(thread: string | undefined, model: string, input: string, emit: (event: PattyEvent) => void, turn?: Parameters<ProviderAdapter['run']>[4], options?: Parameters<ProviderAdapter['run']>[5]) { seen.push(options); return super.run(thread, model, input, emit, turn, options); } }
+    adapters.set(first.id, new FakeAdapter(['gpt-5-codex'], { remaining: 1, observedAt: now() }).failNext('boom')); adapters.set(second.id, new Recording());
+    const coordinator = new Coordinator(store, new Router(store), adapters);
+    const runId = await coordinator.start({ model: 'gpt-5-codex', input: 'x', instructions: 'be terse', reasoningEffort: 'high', sampling: { temperature: 0.2 } });
+    await coordinator.collect(runId);
+    expect(seen).toEqual([{ instructions: 'be terse', reasoningEffort: 'high', sampling: { temperature: 0.2 } }]);
   });
 });

@@ -88,6 +88,8 @@ Word-by-word streaming (`stream=True`) works the same way it does with OpenAI, a
 
 **Asking for JSON works too.** Most apps do not want a paragraph, they want a filled-in form — a name, a number, a list. Send `response_format` with your JSON schema exactly as you would to OpenAI and the answer comes back in that shape, whichever subscription served it. If you send a schema Patty cannot understand, it tells you instead of quietly answering with prose your code cannot read.
 
+**The rest of your request survives too.** Your system prompt stays the instructions for the turn rather than being glued onto the front of the question, `reasoning_effort` decides how hard the model thinks, and `temperature`, `max_tokens`, `stop` and `seed` are passed on to any subscription that accepts them (a ChatGPT subscription has no such dials, so it ignores them). Send a value that makes no sense and Patty says so rather than guessing.
+
 **Tool calling works too.** (Tool calling is how an AI asks your code to run a function — look up the weather, search a database — instead of just replying with text. It is how Cursor and most AI agents work.) Send `tools` exactly as you would to OpenAI. Patty only sends such a request to a subscription that can genuinely handle tools; if none of yours can, it says so clearly instead of quietly giving you an answer that ignores your tools.
 
 Not supported yet: asking for several answers at once (`n>1`), logprobs, and images.

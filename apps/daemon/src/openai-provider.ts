@@ -71,10 +71,16 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
       signal: controller.signal,
       body: JSON.stringify({
         model, stream: true, stream_options: { include_usage: true },
-        messages: turn?.messages?.length ? turn.messages : [{ role: 'user', content: input }],
+        messages: turn?.messages?.length ? turn.messages : [...(options?.instructions ? [{ role: 'system', content: options.instructions }] : []), { role: 'user', content: input }],
         ...(turn?.tools?.length ? { tools: turn.tools } : {}),
         ...(turn?.toolChoice !== undefined ? { tool_choice: turn.toolChoice } : {}),
         ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
+        ...(options?.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
+        ...(options?.sampling?.temperature !== undefined ? { temperature: options.sampling.temperature } : {}),
+        ...(options?.sampling?.topP !== undefined ? { top_p: options.sampling.topP } : {}),
+        ...(options?.sampling?.maxOutputTokens !== undefined ? { max_tokens: options.sampling.maxOutputTokens } : {}),
+        ...(options?.sampling?.stop?.length ? { stop: options.sampling.stop } : {}),
+        ...(options?.sampling?.seed !== undefined ? { seed: options.sampling.seed } : {}),
       }),
     });
     void this.pump(response, turnId, onEvent).finally(() => this.controllers.delete(turnId));

@@ -67,8 +67,8 @@ describe('OpenAI-compatible surface', () => {
     const body = await response.json() as { object: string; choices: { message: { role: string; content: string }; finish_reason: string }[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; prompt_tokens_details: { cached_tokens: number } } };
     expect(body.object).toBe('chat.completion');
     expect(body.choices[0]?.finish_reason).toBe('stop');
-    // The fake worker echoes its flattened input, which proves the transcript reached the provider with both roles.
-    expect(body.choices[0]?.message).toEqual({ role: 'assistant', content: 'fake: system: be terse\n\nuser: hi there' });
+    // The fake worker echoes what it was told, which proves the system message reached the provider as the turn's rules rather than as more prompt text.
+    expect(body.choices[0]?.message).toEqual({ role: 'assistant', content: 'fake [instructions: be terse]: hi there' });
     expect(body.usage.total_tokens).toBe(body.usage.prompt_tokens + body.usage.completion_tokens);
     expect(body.usage.prompt_tokens).toBeGreaterThan(0);
     expect(body.usage.prompt_tokens_details.cached_tokens).toBe(0);
@@ -626,6 +626,61 @@ describe('structured output', () => {
     const body = await (await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'hi' }], response_format: responseFormat }) })).json() as { choices: { message: { content: string } }[] };
     expect(sent[0]).toEqual(responseFormat);
     expect(JSON.parse(body.choices[0]!.message.content)).toEqual({ company_name: 'Acme' });
+    delete process.env.PATTY_TEST_PROVIDER_KEY;
+  });
+});
+
+describe('roles and per-turn knobs', () => {
+  const boot = async () => { const daemon = new PattyDaemon(); daemon.addFakeAccount('codex-work'); server = await daemon.listen(); return { port: (server.address() as { port: number }).port, headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' } }; };
+  const content = async (port: number, headers: Record<string, string>, body: Record<string, unknown>) => ((await (await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', ...body }) })).json()) as { choices: { message: { content: string } }[] }).choices[0]!.message.content;
+
+  it('keeps the system prompt as the turn’s rules and the rest as the conversation', async () => {
+    const { port, headers } = await boot();
+    expect(await content(port, headers, { messages: [{ role: 'system', content: 'be terse' }, { role: 'developer', content: 'answer in French' }, { role: 'user', content: 'hi' }, { role: 'assistant', content: 'salut' }, { role: 'user', content: 'again' }] }))
+      .toBe('fake [instructions: be terse\n\nanswer in French]: user: hi\n\nassistant: salut\n\nuser: again');
+  });
+
+  it('carries reasoning effort and sampling knobs to the sub', async () => {
+    const { port, headers } = await boot();
+    expect(await content(port, headers, { messages: [{ role: 'user', content: 'hi' }], reasoning_effort: 'high', temperature: 0.2, top_p: 0.9, max_tokens: 256, stop: ['END'], seed: 7 }))
+      .toBe('fake [effort: high; sampling: {"temperature":0.2,"topP":0.9,"maxOutputTokens":256,"stop":["END"],"seed":7}]: hi');
+  });
+
+  it('refuses knobs that are out of range instead of quietly reinterpreting them', async () => {
+    const { port, headers } = await boot();
+    for (const knobs of [{ temperature: 5 }, { top_p: 2 }, { max_tokens: 0 }, { seed: 1.5 }, { stop: ['a', 'b', 'c', 'd', 'e'] }, { reasoning_effort: 'VERY HIGH' }]) {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'hi' }], ...knobs }) });
+      expect(response.status, JSON.stringify(knobs)).toBe(400);
+      expect((await response.json() as { error: { code: string } }).error.code).toBe('invalid_request');
+    }
+  });
+
+  it('accepts the same knobs in Patty’s own run shape', async () => {
+    const { port, headers } = await boot();
+    const run = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'hi', instructions: 'be terse', reasoningEffort: 'low', sampling: { temperature: 0.1 } }) })).json() as { id: string };
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const events = await (await fetch(`http://127.0.0.1:${port}/v1/runs/${run.id}/events`, { headers })).text();
+    expect(events).toContain('instructions: be terse');
+    expect(events).toContain('effort: low');
+    expect((await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'hi', sampling: { temperature: 9 } }) })).status).toBe(400);
+  });
+
+  it('forwards roles and knobs to a stacked OpenAI-compatible sub', async () => {
+    const daemon = new PattyDaemon();
+    const sent: Record<string, unknown>[] = [];
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      if (new URL(String(input)).pathname.endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }), { headers: { 'content-type': 'application/json' } });
+      if (body) sent.push(body);
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"ok"}}]}\ndata: [DONE]\n')); controller.close(); } }));
+    }) as unknown as typeof fetch;
+    process.env.PATTY_TEST_PROVIDER_KEY = 'sk-not-a-real-key';
+    await daemon.addOpenAiCompatibleAccount('together', 'https://api.example.invalid/v1', 'PATTY_TEST_PROVIDER_KEY', fetchImpl);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const messages = [{ role: 'system', content: 'be terse' }, { role: 'user', content: 'hi' }];
+    await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-4o-mini', messages, reasoning_effort: 'medium', temperature: 0.3, top_p: 0.8, max_completion_tokens: 128, stop: 'END', seed: 3 }) });
+    expect(sent[0]).toMatchObject({ messages, reasoning_effort: 'medium', temperature: 0.3, top_p: 0.8, max_tokens: 128, stop: ['END'], seed: 3 });
     delete process.env.PATTY_TEST_PROVIDER_KEY;
   });
 });

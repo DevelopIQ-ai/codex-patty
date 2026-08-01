@@ -4,7 +4,7 @@
 
 `POST /v1/chat/completions` accepts OpenAI's request body and returns `chat.completion` (or a `chat.completion.chunk` SSE stream with `stream: true`), so an unmodified OpenAI client works against `OPENAI_BASE_URL=http://127.0.0.1:3210/v1` with a `cp_live_…` key. It is a translation over the same coordinator `/v1/runs` uses, so routing, leases, pre-output failover and metering behave identically:
 
-- messages are flattened to the single text input the app-server takes (`role: content`, blank-line separated; a lone user message is passed verbatim), because the provider has no multi-message input;
+- the verbatim messages travel with the turn, so a provider that speaks roles gets them unchanged; only a single-input provider (a Codex app-server sub) falls back to the flattened transcript (`role: content`, blank-line separated; a lone user message is passed verbatim);
 - `usage` is the provider's own counts mapped to OpenAI's names — `prompt_tokens`/`completion_tokens`/`total_tokens`, with `prompt_tokens_details.cached_tokens` and `completion_tokens_details.reasoning_tokens`. Reasoning output is counted inside `completion_tokens`, as OpenAI reports it;
 - `x-patty-sub` and `x-patty-run` name the sub that served the request and the underlying run, so a caller can attribute or debug a response without a second call;
 - a failed or cancelled run answers `502` (non-streaming) or an `error` frame before `[DONE]` (streaming);
@@ -20,6 +20,16 @@
 - Structured output needs no capability: every stacked provider can constrain a turn, so routing, failover and metering are unchanged. A failover replays the schema onto the next sub along with the prompt.
 
 The same schema can be sent to Patty's own `POST /v1/runs` and `POST /v1/threads/{id}/turns` as `responseFormat`, in the identical shape.
+
+### Roles and per-turn knobs
+
+The rest of the request is carried too, in provider-neutral form, instead of being flattened away with the prompt:
+
+- **System and developer messages are the turn's rules**, not more prompt text. They are split out and sent to a Codex sub as the thread's `developerInstructions`, and to an OpenAI-compatible sub as the original messages. A turn on a thread the caller opened earlier cannot restate the thread's standing rules, so that turn's instructions ride along with its prompt rather than silently replacing them.
+- **`reasoning_effort`** becomes the Codex turn's `effort` and is forwarded as `reasoning_effort` to an OpenAI-compatible sub. It is a free-form string in the app-server protocol — whatever the model advertises — so it is length-checked rather than enumerated against a fixed list.
+- **`temperature`, `top_p`, `max_tokens`/`max_completion_tokens`, `stop`, `seed`** are forwarded to a sub whose provider accepts them. A Codex subscription turn has no decoding knobs, so it ignores them; that is a property of the sub serving the run, not a rejected request.
+- An out-of-range value (`temperature: 5`, `max_tokens: 0`, a fifth `stop` sequence) is `400 invalid_request`, on the same reasoning as a malformed schema.
+- `POST /v1/runs` and `POST /v1/threads/{id}/turns` take the same knobs as `instructions`, `reasoningEffort` and `sampling: {temperature, topP, maxOutputTokens, stop, seed}`. `POST /v1/threads` takes `instructions` as the thread's standing rules. All of them are replayed onto the next sub on failover.
 
 ### Tool calling
 

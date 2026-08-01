@@ -27,8 +27,15 @@ export type ChatResponseFormat =
  | { type: 'text' }
  | { type: 'json_object' }
  | { type: 'json_schema'; json_schema: { name?: string; description?: string; schema: Record<string, unknown>; strict?: boolean } };
-/** Per-turn constraints that are neither the prompt nor the conversation, honoured by whichever sub serves the run. */
-export type TurnOptions = { responseFormat?: ChatResponseFormat };
+/** Decoding knobs, in provider-neutral names. A provider that cannot honour one ignores it rather than failing the turn. */
+export type TurnSampling = { temperature?: number; topP?: number; maxOutputTokens?: number; stop?: string[]; seed?: number };
+/**
+ * Per-turn constraints that are neither the prompt nor the conversation, honoured by whichever sub
+ * serves the run. `instructions` is the system/developer half of the request, kept apart from the
+ * user prompt because a provider that takes a single text input would otherwise be told the words
+ * without being told they are the rules.
+ */
+export type TurnOptions = { responseFormat?: ChatResponseFormat; instructions?: string; reasoningEffort?: string; sampling?: TurnSampling };
 export type RunRequest = { model: string; input: string; capabilities?: string[]; accountId?: string; idempotencyKey?: string; threadId?: string; chat?: ChatTurn } & TurnOptions;
 export type PattyEvent = { version: 1; type: 'started' | 'delta' | 'tool_calls' | 'usage' | 'approval_required' | 'completed' | 'failed' | 'cancelled'; runId: string; data?: unknown };
 /** Provider-reported token counts for a single turn. Counts are metadata, never generated content. */
@@ -57,7 +64,7 @@ export interface ProviderAdapter {
   login(mode: 'browser' | 'device_code'): Promise<{ url?: string; code?: string }>;
   cancelLogin(): Promise<void>;
   snapshot(): Promise<{ models: string[]; quota: Quota; capabilities?: string[] }>;
-  createThread(model: string): Promise<string>;
+  createThread(model: string, options?: TurnOptions): Promise<string>;
   /** Resolves as soon as the provider accepts the turn, with its cancellation ID. */
   run(threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void, turn?: ChatTurn, options?: TurnOptions): Promise<{ turnId: string }>;
   interrupt(providerTurnId: string): Promise<void>;
