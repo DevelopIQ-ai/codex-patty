@@ -39,6 +39,18 @@ components:
             tools: { type: array, items: { type: object, required: [type, function], properties: { type: { type: string, enum: [function] }, function: { type: object, required: [name], properties: { name: { type: string }, description: { type: string }, parameters: { type: object } } } } } }
             toolChoice: {}
         responseFormat: { $ref: '#/components/schemas/ResponseFormat' }
+        instructions: { type: string, description: 'The turn''s rules, kept apart from input. Sent to a Codex sub as the thread''s developerInstructions, and to an OpenAI-compatible sub as a system message.' }
+        reasoningEffort: { type: string, description: 'Whatever effort the model advertises, e.g. minimal, low, medium, high. Sent to a Codex sub as the turn effort and to an OpenAI-compatible sub as reasoning_effort.' }
+        sampling: { $ref: '#/components/schemas/Sampling' }
+    Sampling:
+      type: object
+      description: 'Decoding knobs, forwarded to a sub whose provider accepts them and ignored by one that does not (a Codex subscription turn has no temperature). An out-of-range value is 400 invalid_request.'
+      properties:
+        temperature: { type: number, minimum: 0, maximum: 2 }
+        topP: { type: number, minimum: 0, maximum: 1 }
+        maxOutputTokens: { type: integer, minimum: 1 }
+        stop: { type: array, maxItems: 4, items: { type: string } }
+        seed: { type: integer }
     ResponseFormat:
       description: 'Constrains the final message. json_schema is passed to the provider as the turn output schema, so the answer is the caller''s JSON rather than prose; json_object asks only for a JSON object. A malformed value is 400 invalid_request rather than a silently dropped schema.'
       oneOf:
@@ -122,6 +134,16 @@ components:
                 type: { type: string, enum: [function] }
                 function: { type: object, properties: {name: {type: string}} }
         response_format: { $ref: '#/components/schemas/ResponseFormat' }
+        reasoning_effort: { type: string, description: 'Mapped onto the Codex turn effort, or forwarded as reasoning_effort to an OpenAI-compatible sub' }
+        temperature: { type: number, minimum: 0, maximum: 2 }
+        top_p: { type: number, minimum: 0, maximum: 1 }
+        max_tokens: { type: integer, minimum: 1 }
+        max_completion_tokens: { type: integer, minimum: 1, description: 'Preferred over max_tokens when both are sent' }
+        stop:
+          oneOf:
+            - { type: string }
+            - { type: array, maxItems: 4, items: { type: string } }
+        seed: { type: integer }
 paths:
   /healthz: { get: { responses: {'200': {description: Liveness}} } }
   /: { get: { responses: {'200': {description: Loopback operator console (HTML)}} } }
@@ -135,7 +157,7 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ChatCompletion'}}}}
       responses:
         '200': {description: 'chat.completion, or a chat.completion.chunk SSE stream when stream is true. A turn that calls tools has finish_reason tool_calls, null content and a tool_calls array; tool calls are never persisted, so they appear only on the live response.'}
-        '400': {description: 'Invalid request, including a malformed response_format, or model_unavailable when tools were offered and no stacked sub serving that model supports them'}
+        '400': {description: 'Invalid request, including a malformed response_format or an out-of-range sampling knob, or model_unavailable when tools were offered and no stacked sub serving that model supports them'}
         '502': {description: Upstream run failed or was cancelled}
         '503': {description: 'no_eligible_account: every eligible sub is busy, cooling down or out of quota. Retryable, with Retry-After.'}
   /v1/router/status: { get: { security: [{PattyKey: []}], responses: {'200': {description: Router status}} } }
@@ -158,7 +180,13 @@ paths:
   /v1/accounts/{id}: { delete: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'204': {description: Removed}} } }
   /v1/accounts/{id}/refresh: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'200': {description: Snapshot}} } }
   /v1/accounts/{id}/login/cancel: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/AccountId'}], responses: {'202': {description: Cancelled}} } }
-  /v1/threads: { post: { security: [{PattyKey: []}], responses: {'201': {description: Thread}} } }
+  /v1/threads:
+    post:
+      summary: Open a thread pinned to one sub
+      description: 'Instructions given here are the thread''s standing rules, inherited by every later turn; a turn may still carry its own, which ride along with that turn''s prompt.'
+      security: [{PattyKey: []}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [model], properties: {model: {type: string}, accountId: {type: string}, instructions: {type: string}}}}}}
+      responses: {'201': {description: Thread}}
   /v1/threads/{id}/turns: { post: { security: [{PattyKey: []}], parameters: [{$ref: '#/components/parameters/ThreadId'}], responses: {'202': {description: Turn}} } }
   /metrics: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Prometheus text exposition: sub quota, reset seconds, health, active runs, runs by status, attempts by reason, tokens per sub and per key', content: {text/plain: {schema: {type: string}}}}} } }
   /v1/doctor: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Named checks with a detail and, when failing, a hint that names the fix'}} } }
