@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { Account, PattyEvent, ProviderAdapter } from '@patty/contracts';
+import type { Account, ChatToolCall, PattyEvent, ProviderAdapter } from '@patty/contracts';
+import { ToolBridge } from '../src/tool-bridge.js';
 import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, id, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
 import { estimateCost, loadPrices } from '../src/pricing.js';
 import { codexOutputSchema } from '../src/codex.js';
@@ -368,5 +369,42 @@ describe('roles and per-turn knobs', () => {
     const runId = await coordinator.start({ model: 'gpt-5-codex', input: 'x', instructions: 'be terse', reasoningEffort: 'high', sampling: { temperature: 0.2 } });
     await coordinator.collect(runId);
     expect(seen).toEqual([{ instructions: 'be terse', reasoningEffort: 'high', sampling: { temperature: 0.2 } }]);
+  });
+});
+
+describe('tool bridge', () => {
+  const tools = [{ type: 'function' as const, function: { name: 'get_weather', parameters: { type: 'object' } } }];
+
+  it('publishes only the session’s tools and answers a call with what the caller sent back', async () => {
+    const bridge = new ToolBridge(() => 'http://127.0.0.1:1');
+    const calls: ChatToolCall[] = [];
+    const session = bridge.open(tools, call => calls.push(call));
+    expect(bridge.list(session.token)).toEqual([{ name: 'get_weather', description: '', inputSchema: { type: 'object' } }]);
+    const answered = bridge.call(session.token, 'get_weather', { city: 'Denver' });
+    expect(JSON.parse(calls[0]!.function.arguments)).toEqual({ city: 'Denver' });
+    expect(bridge.waiting(calls[0]!.id)).toBe(true);
+    expect(bridge.settle(calls[0]!.id, 'sunny')).toBe(true);
+    expect(await answered).toBe('sunny');
+    /** The same result cannot be delivered twice, so a retrying caller cannot resume a turn that already moved on. */
+    expect(bridge.settle(calls[0]!.id, 'sunny')).toBe(false);
+    session.close();
+  });
+
+  it('refuses an unknown session, an untouched tool, and outlives neither', async () => {
+    const bridge = new ToolBridge(() => 'http://127.0.0.1:1');
+    expect(() => bridge.list('nope')).toThrow('unknown_bridge_session');
+    const session = bridge.open(tools, () => undefined);
+    expect(() => bridge.call(session.token, 'rm_rf', {})).toThrow('unknown_tool');
+    const pending = bridge.call(session.token, 'get_weather', {});
+    session.close();
+    await expect(pending).rejects.toThrow('turn_ended');
+    expect(() => bridge.list(session.token)).toThrow('unknown_bridge_session');
+  });
+
+  it('gives up on a caller that never answers rather than holding the turn forever', async () => {
+    const bridge = new ToolBridge(() => 'http://127.0.0.1:1', 10);
+    const session = bridge.open(tools, () => undefined);
+    await expect(bridge.call(session.token, 'get_weather', {})).rejects.toThrow('tool_result_timeout');
+    session.close();
   });
 });
