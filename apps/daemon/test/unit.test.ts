@@ -8,7 +8,7 @@ import { loadAliases, resolveModel } from '../src/aliases.js';
 import { responsesBody, responsesToChat } from '../src/responses.js';
 import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, id, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
 import { estimateCost, loadPrices } from '../src/pricing.js';
-import { codexOutputSchema } from '../src/codex.js';
+import { bridgePreamble, codexOutputSchema } from '../src/codex.js';
 import { writeFileSync } from 'node:fs';
 import { PattyDaemon, parseReasoningEffort, parseResponseFormat, parseSampling, splitConversation } from '../src/server.js';
 const account = (id: string, remaining = 1, tier: Account['tier'] = 'primary'): Account => ({ id, alias: id, tier, state: 'ready', models: ['gpt-5-codex'], quota: { remaining, observedAt: now() }, health: 1, activeRuns: 0 });
@@ -326,6 +326,14 @@ describe('structured output plumbing', () => {
     expect(codexOutputSchema({ type: 'json_object' })).toEqual({ type: 'object' });
     expect(codexOutputSchema({ type: 'text' })).toBeUndefined();
     expect(codexOutputSchema(undefined)).toBeUndefined();
+  });
+  it('tells the model the caller\'s functions exist and how to reach them', () => {
+    const preamble = bridgePreamble([{ type: 'function', function: { name: 'get_weather', description: 'Current weather for a city' } }, { type: 'function', function: { name: 'send_email' } }]);
+    expect(preamble).toContain('- get_weather: Current weather for a city');
+    expect(preamble).toContain('- send_email');
+    /** The CLI hides MCP tools until they are searched for, so a preamble that omits this reads as if the tools were already listed. */
+    expect(preamble).toContain('tool_search');
+    expect(preamble).toContain('patty');
   });
   it('replays the schema onto the next sub when the first one fails', async () => {
     const store = new Store(); const adapters = new Map<string, ProviderAdapter>();
