@@ -102,6 +102,8 @@ PATTY_MODEL_ALIASES='{"gpt-5-nano":"gpt-5-codex","*":"gpt-5-codex"}'
 
 Not supported yet: asking for several answers at once (`n>1`), logprobs, and images.
 
+**If your agent runs Codex itself, borrow a sub instead.** Some agents can't use an endpoint at all — they drive the Codex CLI or app-server directly for their own threads, tools, steering and interrupts. `POST /v1/subscriptions/lease` picks a subscription out of your stack the same way routing does and hands back a short-lived access token to run as that sub. The refresh token stays in Patty, so the loan expires on its own and can only be extended through Patty; the lease holds one of that sub's run slots while it lives; and because Patty never sees those turns, they show up in `/metrics` as `patty_sub_credential_leases` and nowhere in usage. See [docs/api.md](docs/api.md#lending-a-sub-to-an-agent-that-drives-codex-itself).
+
 ## Install and keep it running
 
 ```sh

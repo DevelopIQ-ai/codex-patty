@@ -1,9 +1,10 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { ChatResponseFormat, ChatTool, ChatToolCall, ChatTurn, PattyEvent, ProviderAdapter, Quota, TokenUsage, TurnOptions } from '@patty/contracts';
+import type { ChatResponseFormat, ChatTool, ChatToolCall, ChatTurn, LeasedCredential, PattyEvent, ProviderAdapter, Quota, TokenUsage, TurnOptions } from '@patty/contracts';
 import type { ToolBridge, ToolBridgeSession } from './tool-bridge.js';
 
 type Rpc = { id?: unknown; method?: unknown; params?: unknown; result?: unknown; error?: { message?: unknown } };
@@ -124,6 +125,21 @@ export class CodexAppServerAdapter extends EventEmitter implements ProviderAdapt
   private async startTurn(activeThreadId: string, model: string, input: string, emit: (event: PattyEvent) => void, options?: TurnOptions, threadId?: string, session?: ToolBridgeSession) { const outputSchema = codexOutputSchema(options?.responseFormat); /** A thread the caller opened earlier already carries its own developer instructions, so this turn's rules ride along with the prompt rather than silently replacing them. */ const text = threadId && options?.instructions ? `${options.instructions}\n\n${input}` : input; const result = await this.rpc('turn/start', { threadId: activeThreadId, model, input: [{ type: 'text', text, text_elements: [] }], ...(outputSchema ? { outputSchema } : {}), ...(options?.reasoningEffort ? { effort: options.reasoningEffort } : {}) }) as { turn: { id: string } }; this.turns.set(result.turn.id, { threadId: activeThreadId, emit }); if (session) this.bridged.set(result.turn.id, session); const legacy = this.earlyApprovalsByThread.get(activeThreadId) ?? []; this.earlyApprovalsByThread.delete(activeThreadId); for (const approval of legacy) { approval.turnId = result.turn.id; this.approvals.set(String(approval.requestId), approval); emit({ version: 1, type: 'approval_required', runId: result.turn.id, data: { approvalId: String(approval.requestId) } }); } let terminal = false; for (const message of this.earlyEvents.get(result.turn.id) ?? []) { if ('approval' in message) { this.approvals.set(String(message.approval.requestId), message.approval); emit({ version: 1, type: 'approval_required', runId: result.turn.id, data: { approvalId: String(message.approval.requestId) } }); } else { emit(message); terminal ||= message.type === 'completed' || message.type === 'failed' || message.type === 'cancelled'; } } if (terminal) this.clearTurn(result.turn.id); else this.earlyEvents.delete(result.turn.id); return { turnId: result.turn.id }; }
   async interrupt(providerTurnId: string) { const ref = this.turns.get(providerTurnId); if (!ref) throw new Error('unknown_turn'); await this.rpc('turn/interrupt', { threadId: ref.threadId, turnId: providerTurnId }); }
   async approve(approvalId: string, approved: boolean) { const approval = this.approvals.get(approvalId); if (!approval) throw new Error('unknown_approval'); this.approvals.delete(approvalId); this.respond(approval.requestId, this.approvalResult(approval, approved)); }
+  /**
+   * The access token the CLI is using right now, refreshed first so a caller is never handed one
+   * about to expire. Only the access token and the account it belongs to are read: the refresh
+   * token stays in the sub's home, so a lent credential dies on its own schedule and cannot be
+   * turned back into the account by whoever borrowed it.
+   */
+  async credential(): Promise<LeasedCredential> {
+    const read = await this.rpc('account/read', { refreshToken: true }) as { account?: { planType?: unknown } | null };
+    let stored: { auth_mode?: unknown; tokens?: { access_token?: unknown; account_id?: unknown } };
+    try { stored = JSON.parse(readFileSync(join(this.home, 'auth.json'), 'utf8')) as typeof stored; } catch { throw new Error('credential_unavailable'); }
+    const accessToken = stored.tokens?.access_token, chatgptAccountId = stored.tokens?.account_id;
+    /** An API-key login has no subscription to lend, and a half-written credential is not one either. */
+    if (stored.auth_mode !== 'chatgpt' || typeof accessToken !== 'string' || !accessToken || typeof chatgptAccountId !== 'string' || !chatgptAccountId) throw new Error('credential_unavailable');
+    return { accessToken, chatgptAccountId, chatgptPlanType: typeof read.account?.planType === 'string' ? read.account.planType : null };
+  }
   async logout() { await this.rpc('account/logout'); } async health() { return Boolean(this.child); }
   async shutdown() { const child = this.child; if (!child) return; this.stopping = true; this.stop(new Error('worker shut down')); child.kill('SIGTERM'); const exited = await new Promise<boolean>(resolve => { const timer = setTimeout(() => resolve(false), 1_000); child.once('exit', () => { clearTimeout(timer); resolve(true); }); }); if (!exited) { child.kill('SIGKILL'); await new Promise<void>(resolve => child.once('exit', () => resolve())); } this.stopping = false; }
 }

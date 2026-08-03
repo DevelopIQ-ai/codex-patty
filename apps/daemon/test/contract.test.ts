@@ -94,3 +94,17 @@ describe('account readiness', () => {
   it('treats a populated account as ready even when requiresOpenaiAuth is set', async () => { const source = fixtureSource.replace('"requiresOpenaiAuth":false', '"requiresOpenaiAuth":true'); expect(source).not.toBe(fixtureSource); const { dir, command } = await fixture(source); const adapter = new CodexAppServerAdapter(command, [], dir, '0.145.0'); await adapter.start(); await expect(adapter.waitForAccount(1_000)).resolves.toMatchObject({ requiresOpenaiAuth: true }); expect((await adapter.snapshot()).models).toEqual(['gpt-5-codex']); await adapter.shutdown(); });
   it('rejects readiness while no account is present', async () => { const source = fixtureSource.replace(JSON.stringify(officialAccountResponse), JSON.stringify({ account: null, requiresOpenaiAuth: true })); expect(source).not.toBe(fixtureSource); const { dir, command } = await fixture(source); const adapter = new CodexAppServerAdapter(command, [], dir, '0.145.0'); await adapter.start(); await expect(adapter.waitForAccount(300)).rejects.toThrow('account_login_not_ready'); await adapter.shutdown(); });
 });
+
+describe('lending a subscription credential', () => {
+  it('asks the app-server to refresh, then reads only the access token and its account', async () => { const { dir, command } = await fixture(); await writeFile(join(dir, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: null, auth_mode: 'chatgpt', tokens: { id_token: 'id', access_token: 'access-token-value', refresh_token: 'refresh-token-value', account_id: 'chatgpt-account-1' }, last_refresh: new Date().toISOString() })); const adapter = new CodexAppServerAdapter(command, [], dir, '0.145.0'); await adapter.start();
+    const credential = await adapter.credential();
+    expect(credential).toEqual({ accessToken: 'access-token-value', chatgptAccountId: 'chatgpt-account-1', chatgptPlanType: 'plus' });
+    /** The refresh token is what turns a short loan into permanent access to the account, so it stays in the sub's home. */
+    expect(JSON.stringify(credential)).not.toContain('refresh-token-value');
+    const Ajv = (await import('ajv')).default as unknown as new (options: { strict: boolean; validateFormats: boolean }) => { compile: (schema: object) => (data: unknown) => boolean };
+    const read = (await requests(dir)).find(request => request.method === 'account/read')!;
+    expect(read.params).toEqual({ refreshToken: true });
+    expect(new Ajv({ strict: false, validateFormats: false }).compile(await schema('GetAccountParams'))(read.params)).toBe(true);
+    await adapter.shutdown(); });
+  it('refuses to lend a sub logged in with an API key', async () => { const { dir, command } = await fixture(); await writeFile(join(dir, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: 'sk-not-a-real-key', auth_mode: 'apikey', tokens: null })); const adapter = new CodexAppServerAdapter(command, [], dir, '0.145.0'); await adapter.start(); await expect(adapter.credential()).rejects.toThrow('credential_unavailable'); await adapter.shutdown(); });
+});
