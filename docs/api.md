@@ -52,7 +52,30 @@ The app-server protocol has no way to hand a subscription turn the caller's func
 4. The caller runs the function and sends the result back the way an OpenAI client already does — a `tool` message carrying the `tool_call_id`, in the next `POST /v1/chat/completions`. Patty matches that id to the parked turn and resumes it rather than starting a new one, so the sub keeps everything it had already worked out. The response reports the same run id as the first half of the round trip. The transcript in the follow-up request is ignored for a resumed turn: the sub is still holding the conversation.
 5. A caller that never comes back is not held forever — the parked call times out (`PATTY_TOOL_RESULT_TIMEOUT_MS`, five minutes by default) and the turn fails rather than pinning the sub. An id Patty no longer holds is not resumable, and the request is served as a fresh turn instead.
 
-`GET /v1/models` returns OpenAI's list shape (`{object:'list',data:[{id,object:'model',owned_by}]}`) with a Patty-specific `subs` array naming which stacked subs can serve each model.
+### Responses API
+
+`POST /v1/responses` is the same engine as `/v1/chat/completions` with the Responses request and answer shapes, because a current OpenAI SDK or Vercel AI SDK client reaches for that path by default and a stack that only speaks chat completions is unreachable to it.
+
+- `input` takes a string or a list of items; `instructions` become the turn's rules exactly as a `system` message does. A `function_call` item is read as the assistant turn holding that call and a `function_call_output` item as the `tool` message answering it, so a Responses caller resumes a parked turn on the same machinery a chat caller uses — and gets the same response `id` back.
+- `text.format` is the Responses spelling of `response_format` (`{type:'json_schema', name, schema, strict}`), `reasoning.effort` of `reasoning_effort`, and `max_output_tokens` of `max_completion_tokens`. `temperature`, `top_p` and `seed` are unchanged.
+- Only `type: 'function'` tools are accepted. A hosted tool (`web_search_preview` and friends) is `400 invalid_request`: no stacked sub can run it, and dropping it would answer a question the caller did not ask.
+- The answer is a `response` object whose `output` is a list of items — an `output_text` message, plus a `function_call` item per call the model made — with `usage` in Responses names (`input_tokens`/`output_tokens`/`total_tokens`). A response carrying calls is `completed`: the call is an output item, and the next move is the caller's.
+- `stream: true` emits the named SSE events a Responses client expects, in order and numbered: `response.created`, `response.in_progress`, `response.output_item.added`, `response.content_part.added`, `response.output_text.delta`…, `response.output_text.done`, `response.content_part.done`, `response.output_item.done` (once per item), then `response.completed` — or `response.failed` carrying the error.
+
+### Model aliases
+
+An application asks for the model it was written against, and a stack of Codex subscriptions serves none of those names. `PATTY_MODEL_ALIASES` is the operator's answer, a JSON object of `{"asked-for":"actually-served"}`:
+
+```sh
+PATTY_MODEL_ALIASES='{"gpt-5-nano":"gpt-5-codex","*":"gpt-5-codex"}'
+```
+
+- A name the stack actually serves always wins, so stacking a sub that serves the asked-for model quietly stops the aliasing without a config change.
+- `*` is the catch-all for anything unmapped. Without one, an unmapped name is left alone and fails as the honest `503 no_eligible_account` it is, rather than being answered by a model the caller did not ask for.
+- Resolution happens once, at the edge, on `/v1/chat/completions`, `/v1/responses`, `/v1/runs` and thread turns, so routing, metering, run history and the `model` field of the answer all name the model that actually ran.
+- A broken map fails at boot rather than routing somewhere surprising.
+
+`GET /v1/models` returns OpenAI's list shape (`{object:'list',data:[{id,object:'model',owned_by}]}`) with a Patty-specific `subs` array naming which stacked subs can serve each model. An aliased name is listed as a model in its own right — to the client asking for it, that is what it is — with `aliasOf` naming who actually answers.
 
 ## Routing and quota windows
 

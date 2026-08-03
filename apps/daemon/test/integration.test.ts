@@ -755,3 +755,108 @@ describe('roles and per-turn knobs', () => {
     delete process.env.PATTY_TEST_PROVIDER_KEY;
   });
 });
+
+describe('responses API', () => {
+  const boot = async () => { const daemon = new PattyDaemon(); daemon.addFakeAccount('codex-work'); server = await daemon.listen(); return { port: (server.address() as { port: number }).port, headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' } }; };
+  const post = (port: number, headers: Record<string, string>, body: Record<string, unknown>) => fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', ...body }) });
+  type ResponseBody = { id: string; object: string; status: string; model: string; output: { type: string; call_id?: string; name?: string; content?: { type: string; text: string }[] }[]; output_text: string; usage?: { input_tokens: number; output_tokens: number; total_tokens: number } };
+
+  it('answers a plain input with an output_text item and Responses-shaped usage', async () => {
+    const { port, headers } = await boot();
+    const response = await post(port, headers, { input: 'hi there' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-patty-sub')).toBe('codex-work');
+    const body = await response.json() as ResponseBody;
+    expect(body).toMatchObject({ object: 'response', status: 'completed', model: 'gpt-5-codex', output_text: 'fake: hi there' });
+    expect(body.output[0]).toMatchObject({ type: 'message', content: [{ type: 'output_text', text: 'fake: hi there' }] });
+    expect(body.usage).toMatchObject({ input_tokens: expect.any(Number), output_tokens: expect.any(Number), total_tokens: expect.any(Number) });
+  });
+
+  it('keeps instructions as the turn’s rules and reads a list of input items', async () => {
+    const { port, headers } = await boot();
+    const body = await (await post(port, headers, { instructions: 'be terse', input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }, { role: 'assistant', content: 'salut' }, { role: 'user', content: 'again' }], reasoning: { effort: 'high' }, max_output_tokens: 64 })).json() as ResponseBody;
+    expect(body.output_text).toBe('fake [instructions: be terse; effort: high; sampling: {"maxOutputTokens":64}]: user: hi\n\nassistant: salut\n\nuser: again');
+  });
+
+  it('honours text.format json_schema the way response_format does', async () => {
+    const { port, headers } = await boot();
+    const body = await (await post(port, headers, { input: 'describe', text: { format: { type: 'json_schema', name: 'company', strict: true, schema: { type: 'object', properties: { company_name: { type: 'string' } } } } } })).json() as ResponseBody;
+    expect(JSON.parse(body.output_text)).toEqual({ company_name: 'fake' });
+  });
+
+  it('streams named response events, not opaque chunks', async () => {
+    const { port, headers } = await boot();
+    const raw = await (await post(port, headers, { input: 'hi there', stream: true })).text();
+    const frames = raw.split('\n\n').filter(Boolean).map(frame => ({ event: frame.split('\n')[0]!.slice(7), data: JSON.parse(frame.split('\n')[1]!.slice(6)) as { sequence_number: number; delta?: string; response?: ResponseBody } }));
+    expect(frames.map(frame => frame.event)).toEqual(['response.created', 'response.in_progress', 'response.output_item.added', 'response.content_part.added', 'response.output_text.delta', 'response.output_text.done', 'response.content_part.done', 'response.output_item.done', 'response.completed']);
+    expect(frames.map(frame => frame.data.sequence_number)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(frames.find(frame => frame.event === 'response.output_text.delta')?.data.delta).toBe('fake: hi there');
+    expect(frames.at(-1)!.data.response).toMatchObject({ status: 'completed', output_text: 'fake: hi there' });
+  });
+
+  it('runs a whole tool round trip in Responses items', async () => {
+    const { port, headers } = await boot();
+    const tools = [{ type: 'function', name: 'get_weather', description: 'current weather', parameters: { type: 'object', properties: { city: { type: 'string' } } } }];
+    const first = await (await post(port, headers, { input: 'weather in Denver?', tools })).json() as ResponseBody;
+    const call = first.output.find(item => item.type === 'function_call')!;
+    expect(call).toMatchObject({ type: 'function_call', name: 'get_weather' });
+    const second = await (await post(port, headers, { tools, input: [{ role: 'user', content: 'weather in Denver?' }, { type: 'function_call', call_id: call.call_id, name: 'get_weather', arguments: '{}' }, { type: 'function_call_output', call_id: call.call_id, output: 'sunny, 21C' }] })).json() as ResponseBody;
+    /** The parked turn was rejoined, so the answer belongs to the same response the call came from. */
+    expect(second.id).toBe(first.id);
+    expect(second.output_text).toBe('fake used get_weather: sunny, 21C');
+  });
+
+  it('refuses a request with no model, and a hosted tool no stacked sub could run', async () => {
+    const { port, headers } = await boot();
+    expect((await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST', headers, body: JSON.stringify({ input: 'hi' }) })).status).toBe(400);
+    expect((await post(port, headers, { input: 'hi', tools: [{ type: 'web_search_preview' }] })).status).toBe(400);
+  });
+});
+
+describe('model aliases', () => {
+  const boot = async (aliases?: Record<string, string>) => {
+    const daemon = new PattyDaemon();
+    if (aliases) daemon.aliases = aliases;
+    daemon.addFakeAccount('codex-work');
+    server = await daemon.listen();
+    return { daemon, port: (server.address() as { port: number }).port, headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' } };
+  };
+  const ask = async (port: number, headers: Record<string, string>, model: string) => fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }] }) });
+
+  it('serves a model the stack has never heard of, and says which one answered', async () => {
+    const { port, headers } = await boot({ 'gpt-5-nano': 'gpt-5-codex' });
+    const response = await ask(port, headers, 'gpt-5-nano');
+    expect(response.status).toBe(200);
+    /** The answer names the model that actually ran, so a caller is never told a subscription served something it cannot serve. */
+    expect((await response.json() as { model: string }).model).toBe('gpt-5-codex');
+  });
+
+  it('catches everything unmapped with * and refuses unmapped models without one', async () => {
+    const caught = await boot({ '*': 'gpt-5-codex' });
+    expect((await ask(caught.port, caught.headers, 'claude-3-5-sonnet')).status).toBe(200);
+    const bare = await boot();
+    const refused = await ask(bare.port, bare.headers, 'claude-3-5-sonnet');
+    /** Without a mapping the name is left alone, so it fails as the honest “nothing here serves that” it is. */
+    expect(refused.status).toBe(503);
+    expect((await refused.json() as { error: { code: string } }).error.code).toBe('no_eligible_account');
+  });
+
+  it('never aliases over a model the stack actually serves', async () => {
+    const { port, headers } = await boot({ 'gpt-5-codex': 'somewhere-else' });
+    expect((await (await ask(port, headers, 'gpt-5-codex')).json() as { model: string }).model).toBe('gpt-5-codex');
+  });
+
+  it('lists an alias as a model of its own, naming who answers it', async () => {
+    const { port, headers } = await boot({ 'gpt-5-nano': 'gpt-5-codex', '*': 'gpt-5-codex' });
+    const listed = await (await fetch(`http://127.0.0.1:${port}/v1/models`, { headers })).json() as { data: { id: string; aliasOf?: string; subs: string[] }[] };
+    expect(listed.data).toEqual([{ id: 'gpt-5-codex', object: 'model', owned_by: 'pattystack', subs: ['codex-work'] }, { id: 'gpt-5-nano', object: 'model', owned_by: 'pattystack', aliasOf: 'gpt-5-codex', subs: ['codex-work'] }]);
+  });
+
+  it('applies the alias on Patty’s own run shape too', async () => {
+    const { port, headers } = await boot({ 'gpt-5-nano': 'gpt-5-codex' });
+    const run = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-nano', input: 'hi' }) })).json() as { id: string };
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const history = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { headers })).json() as { data: { runId: string; model: string }[] };
+    expect(history.data.find(record => record.runId === run.id)?.model).toBe('gpt-5-codex');
+  });
+});

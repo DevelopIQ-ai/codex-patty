@@ -148,7 +148,7 @@ paths:
   /healthz: { get: { responses: {'200': {description: Liveness}} } }
   /: { get: { responses: {'200': {description: Loopback operator console (HTML)}} } }
   /v1/usage: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Token usage totals, per-sub and per-key aggregates, and recent measured runs. Each carries a cost block estimated from a local price table (override with PATTY_PRICES): subscriptionUsd is what primary subs absorbed at API list price, apiUsd is real fallback spend, and a model with no price is counted in unpricedRuns rather than as zero.'}} } }
-  /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Models in OpenAI list shape; each entry names the subs that serve it'}} } }
+  /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Models in OpenAI list shape; each entry names the subs that serve it. An aliased name is listed too, with aliasOf naming the model that actually answers it.'}} } }
   /v1/chat/completions:
     post:
       summary: OpenAI-compatible chat completion, routed across stacked subs
@@ -158,6 +158,36 @@ paths:
       responses:
         '200': {description: 'chat.completion, or a chat.completion.chunk SSE stream when stream is true. A turn that calls tools has finish_reason tool_calls, null content and a tool_calls array; tool calls are never persisted, so they appear only on the live response.'}
         '400': {description: 'Invalid request, including a malformed response_format or an out-of-range sampling knob, or model_unavailable when tools were offered and no stacked sub serving that model supports them'}
+        '502': {description: Upstream run failed or was cancelled}
+        '503': {description: 'no_eligible_account: every eligible sub is busy, cooling down or out of quota. Retryable, with Retry-After.'}
+  /v1/responses:
+    post:
+      summary: OpenAI Responses API over the same stacked subs
+      description: 'The request and answer shapes a current OpenAI or AI SDK client defaults to, translated onto the same chat turn: instructions become the turn''s rules, function_call/function_call_output items carry a tool round trip, text.format is response_format, reasoning.effort is reasoning_effort, max_output_tokens is max_completion_tokens. Only function tools are accepted; a hosted tool is refused rather than dropped.'
+      security: [{PattyKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model]
+              properties:
+                model: {type: string, description: 'Resolved through PATTY_MODEL_ALIASES when no stacked sub serves it'}
+                input: {description: 'A string, or a list of message / function_call / function_call_output items', oneOf: [{type: string}, {type: array, items: {type: object}}]}
+                instructions: {type: string}
+                stream: {type: boolean}
+                tools: {type: array, items: {type: object, required: [type], properties: {type: {type: string, enum: [function]}, name: {type: string}, description: {type: string}, parameters: {type: object}}}}
+                tool_choice: {}
+                text: {type: object, properties: {format: {type: object, properties: {type: {type: string, enum: [text, json_object, json_schema]}, name: {type: string}, schema: {type: object}, strict: {type: boolean}}}}}
+                reasoning: {type: object, properties: {effort: {type: string}}}
+                max_output_tokens: {type: integer, minimum: 1}
+                temperature: {type: number, minimum: 0, maximum: 2}
+                top_p: {type: number, minimum: 0, maximum: 1}
+                seed: {type: integer}
+      responses:
+        '200': {description: 'A response object whose output is a list of items (an output_text message, plus a function_call item per call), with usage in Responses names. With stream true, the named SSE events response.created, response.in_progress, response.output_item.added, response.content_part.added, response.output_text.delta, response.output_text.done, response.content_part.done, response.output_item.done and response.completed (or response.failed).'}
+        '400': {description: 'Invalid request, including a hosted tool or a malformed text.format, or model_unavailable when tools were offered and no stacked sub serving that model supports them'}
         '502': {description: Upstream run failed or was cancelled}
         '503': {description: 'no_eligible_account: every eligible sub is busy, cooling down or out of quota. Retryable, with Retry-After.'}
   /v1/router/status: { get: { security: [{PattyKey: []}], responses: {'200': {description: Router status}} } }

@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { Account, ChatToolCall, PattyEvent, ProviderAdapter } from '@patty/contracts';
 import { ToolBridge } from '../src/tool-bridge.js';
+import { loadAliases, resolveModel } from '../src/aliases.js';
+import { responsesBody, responsesToChat } from '../src/responses.js';
 import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, id, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
 import { estimateCost, loadPrices } from '../src/pricing.js';
 import { codexOutputSchema } from '../src/codex.js';
@@ -406,5 +408,58 @@ describe('tool bridge', () => {
     const session = bridge.open(tools, () => undefined);
     await expect(bridge.call(session.token, 'get_weather', {})).rejects.toThrow('tool_result_timeout');
     session.close();
+  });
+});
+
+describe('model aliases', () => {
+  const served = (model: string) => model === 'gpt-5-codex';
+
+  it('prefers a model the stack serves, then the map, then the catch-all, then the name itself', () => {
+    const aliases = { 'gpt-5-codex': 'ignored', 'gpt-5-nano': 'gpt-5-codex', '*': 'gpt-5-codex' };
+    expect(resolveModel('gpt-5-codex', aliases, served)).toBe('gpt-5-codex');
+    expect(resolveModel('gpt-5-nano', aliases, served)).toBe('gpt-5-codex');
+    expect(resolveModel('claude-3-5-sonnet', aliases, served)).toBe('gpt-5-codex');
+    expect(resolveModel('claude-3-5-sonnet', {}, served)).toBe('claude-3-5-sonnet');
+  });
+
+  it('refuses a broken map at boot rather than routing somewhere surprising', () => {
+    expect(loadAliases(undefined)).toEqual({});
+    expect(loadAliases('  ')).toEqual({});
+    expect(loadAliases('{"gpt-5-nano":"gpt-5-codex"}')).toEqual({ 'gpt-5-nano': 'gpt-5-codex' });
+    for (const broken of ['not json', '["gpt-5-codex"]', '{"gpt-5-nano":5}', '{"gpt-5-nano":"a model"}', '{"a model":"gpt-5-codex"}']) expect(() => loadAliases(broken), broken).toThrow('PATTY_MODEL_ALIASES');
+  });
+});
+
+describe('responses translation', () => {
+  it('turns Responses items back into the chat turn they describe', () => {
+    expect(responsesToChat({ model: 'm', instructions: 'be terse', input: [
+      { role: 'user', content: [{ type: 'input_text', text: 'weather?' }] },
+      { type: 'function_call', call_id: 'call_1', name: 'get_weather', arguments: '{"city":"Denver"}' },
+      { type: 'function_call_output', call_id: 'call_1', output: 'sunny' }
+    ], tools: [{ type: 'function', name: 'get_weather', parameters: { type: 'object' } }], reasoning: { effort: 'high' }, max_output_tokens: 64, text: { format: { type: 'json_schema', name: 'w', strict: true, schema: { type: 'object' } } } })).toEqual({
+      model: 'm',
+      messages: [
+        { role: 'system', content: 'be terse' },
+        { role: 'user', content: 'weather?' },
+        { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{"city":"Denver"}' } }] },
+        { role: 'tool', tool_call_id: 'call_1', content: 'sunny' }
+      ],
+      tools: [{ type: 'function', function: { name: 'get_weather', parameters: { type: 'object' } } }],
+      response_format: { type: 'json_schema', json_schema: { name: 'w', strict: true, schema: { type: 'object' } } },
+      reasoning_effort: 'high', max_completion_tokens: 64
+    });
+  });
+
+  it('refuses a request with no model and a tool no stacked sub could run', () => {
+    expect(() => responsesToChat({ input: 'hi' })).toThrow('invalid_request');
+    expect(() => responsesToChat({ model: 'm', input: 42 })).toThrow('invalid_request');
+    expect(() => responsesToChat({ model: 'm', input: 'hi', tools: [{ type: 'web_search_preview' }] })).toThrow('invalid_request');
+  });
+
+  it('reports a call as an output item beside whatever the model said', () => {
+    const body = responsesBody('resp_1', 'm', 1, 'here you go', [{ id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{}' } }]);
+    expect(body).toMatchObject({ id: 'resp_1', object: 'response', status: 'completed', output_text: 'here you go' });
+    expect(body.output.map(item => item.type)).toEqual(['message', 'function_call']);
+    expect(body.output[1]).toMatchObject({ call_id: 'call_1', name: 'get_weather', arguments: '{}' });
   });
 });
