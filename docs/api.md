@@ -10,6 +10,17 @@
 - a failed or cancelled run answers `502` (non-streaming) or an `error` frame before `[DONE]` (streaming);
 - unsupported today: `n>1`, logprobs, images.
 
+### Structured output
+
+`response_format` is honoured rather than dropped, because an agentic caller asking for a filled-in schema and getting a paragraph back fails at its own parser, with nothing in the request to explain why.
+
+- `{type:'json_schema', json_schema:{name?, description?, strict?, schema}}` is handed to the provider as the turn's output schema — for a Codex sub, `turn/start.outputSchema`, which the app-server uses to constrain the final assistant message; for an OpenAI-compatible sub, the `response_format` is forwarded verbatim. The answer arrives as JSON text in the usual `content`, so an OpenAI client parses it unchanged.
+- `{type:'json_object'}` names no schema, so it becomes the loosest object schema (`{type:'object'}`) on providers that need one. `{type:'text'}` is the default and constrains nothing.
+- A malformed `response_format` — `json_schema` with no `schema` object, or an unknown `type` — is `400 invalid_request`. Silently dropping it is the one failure a structured caller cannot detect, so it is refused up front.
+- Structured output needs no capability: every stacked provider can constrain a turn, so routing, failover and metering are unchanged. A failover replays the schema onto the next sub along with the prompt.
+
+The same schema can be sent to Patty's own `POST /v1/runs` and `POST /v1/threads/{id}/turns` as `responseFormat`, in the identical shape.
+
 ### Tool calling
 
 `tools` and `tool_choice` are passed through to the provider, and a turn that calls one answers with `finish_reason: "tool_calls"`, `content: null` and an assembled `tool_calls` array; streaming emits the calls as one `delta.tool_calls` chunk before the finishing chunk, since Patty assembles the provider's fragments rather than forwarding them piecemeal.

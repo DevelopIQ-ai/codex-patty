@@ -568,3 +568,64 @@ describe('tool calling', () => {
     expect((await response.json() as { error: { code: string; retryable: boolean } }).error).toMatchObject({ code: 'model_unavailable', retryable: false });
   });
 });
+
+describe('structured output', () => {
+  const schema = { type: 'object', properties: { company_name: { type: 'string' }, employee_count: { type: 'integer' }, remote: { type: 'boolean' }, tags: { type: 'array', items: { type: 'string' } } }, required: ['company_name', 'employee_count'], additionalProperties: false };
+  const responseFormat = { type: 'json_schema', json_schema: { name: 'company', strict: true, schema } };
+  const boot = async () => { const daemon = new PattyDaemon(); daemon.addFakeAccount('codex-work'); server = await daemon.listen(); return { port: (server.address() as { port: number }).port, headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' } }; };
+
+  it('answers a json_schema request with JSON in the caller’s shape rather than prose', async () => {
+    const { port, headers } = await boot();
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'describe this company' }], response_format: responseFormat }) });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { choices: { message: { content: string } }[] };
+    expect(JSON.parse(body.choices[0]!.message.content)).toEqual({ company_name: 'fake', employee_count: 0, remote: false, tags: ['fake'] });
+  });
+
+  it('streams the same JSON to a structured caller that asked for a stream', async () => {
+    const { port, headers } = await boot();
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'describe' }], response_format: responseFormat, stream: true }) });
+    const text = (await response.text()).split('\n\n').filter(line => line.startsWith('data: ') && !line.includes('[DONE]')).map(line => (JSON.parse(line.slice(6)) as { choices: { delta: { content?: string } }[] }).choices[0]!.delta.content ?? '').join('');
+    expect(JSON.parse(text)).toMatchObject({ company_name: 'fake' });
+  });
+
+  it('carries a schema through /v1/runs and thread turns too', async () => {
+    const { port, headers } = await boot();
+    const run = await (await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'describe', responseFormat }) })).json() as { id: string };
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const events = await (await fetch(`http://127.0.0.1:${port}/v1/runs/${run.id}/events`, { headers })).text();
+    expect(events).toContain('company_name');
+    const thread = await (await fetch(`http://127.0.0.1:${port}/v1/threads`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex' }) })).json() as { threadId: string };
+    expect((await fetch(`http://127.0.0.1:${port}/v1/threads/${thread.threadId}/turns`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'describe', responseFormat }) })).status).toBe(202);
+  });
+
+  it('refuses a malformed response_format instead of silently answering with prose', async () => {
+    const { port, headers } = await boot();
+    for (const format of [{ type: 'json_schema' }, { type: 'json_schema', json_schema: { name: 'x' } }, { type: 'json_schema', json_schema: { schema: [] } }, { type: 'yaml' }]) {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', messages: [{ role: 'user', content: 'hi' }], response_format: format }) });
+      expect(response.status, JSON.stringify(format)).toBe(400);
+      expect((await response.json() as { error: { code: string } }).error.code).toBe('invalid_request');
+    }
+    const runs = await fetch(`http://127.0.0.1:${port}/v1/runs`, { method: 'POST', headers, body: JSON.stringify({ model: 'gpt-5-codex', input: 'hi', responseFormat: { type: 'json_schema' } }) });
+    expect(runs.status).toBe(400);
+  });
+
+  it('forwards response_format verbatim to a stacked OpenAI-compatible sub', async () => {
+    const daemon = new PattyDaemon();
+    const sent: unknown[] = [];
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      if (new URL(String(input)).pathname.endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }), { headers: { 'content-type': 'application/json' } });
+      sent.push(body?.response_format);
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"{\\"company_name\\":\\"Acme\\"}"}}]}\ndata: [DONE]\n')); controller.close(); } }));
+    }) as unknown as typeof fetch;
+    process.env.PATTY_TEST_PROVIDER_KEY = 'sk-not-a-real-key';
+    await daemon.addOpenAiCompatibleAccount('together', 'https://api.example.invalid/v1', 'PATTY_TEST_PROVIDER_KEY', fetchImpl);
+    server = await daemon.listen();
+    const { port } = server.address() as { port: number };
+    const body = await (await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${daemon.key}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'hi' }], response_format: responseFormat }) })).json() as { choices: { message: { content: string } }[] };
+    expect(sent[0]).toEqual(responseFormat);
+    expect(JSON.parse(body.choices[0]!.message.content)).toEqual({ company_name: 'Acme' });
+    delete process.env.PATTY_TEST_PROVIDER_KEY;
+  });
+});

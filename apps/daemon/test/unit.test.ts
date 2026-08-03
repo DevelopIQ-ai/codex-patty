@@ -5,8 +5,9 @@ import { randomUUID } from 'node:crypto';
 import type { Account, PattyEvent, ProviderAdapter } from '@patty/contracts';
 import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, id, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
 import { estimateCost, loadPrices } from '../src/pricing.js';
+import { codexOutputSchema } from '../src/codex.js';
 import { writeFileSync } from 'node:fs';
-import { PattyDaemon } from '../src/server.js';
+import { PattyDaemon, parseResponseFormat } from '../src/server.js';
 const account = (id: string, remaining = 1, tier: Account['tier'] = 'primary'): Account => ({ id, alias: id, tier, state: 'ready', models: ['gpt-5-codex'], quota: { remaining, observedAt: now() }, health: 1, activeRuns: 0 });
 const wait = () => new Promise(resolve => setTimeout(resolve, 0));
 class ControlledAdapter implements ProviderAdapter {
@@ -306,5 +307,35 @@ describe('cost estimates', () => {
     const work = report.accounts.find(entry => entry.alias === 'codex-work')!;
     expect(work).toMatchObject({ tier: 'primary', cost: { estimatedCostUsd: 1.25, unpricedRuns: 1 } });
     expect(report.runs.find(run => run.model === 'local-llama')!.estimatedCostUsd).toBeNull();
+  });
+});
+
+describe('structured output plumbing', () => {
+  it('accepts the response_format shapes OpenAI clients send and refuses the rest', () => {
+    expect(parseResponseFormat(undefined)).toBeUndefined();
+    expect(parseResponseFormat({ type: 'json_object' })).toEqual({ type: 'json_object' });
+    expect(parseResponseFormat({ type: 'json_schema', json_schema: { name: 'c', strict: true, schema: { type: 'object' }, extra: 'ignored' } })).toEqual({ type: 'json_schema', json_schema: { name: 'c', strict: true, schema: { type: 'object' } } });
+    for (const bad of [{ type: 'json_schema' }, { type: 'json_schema', json_schema: { schema: 'object' } }, { type: 'nonsense' }]) expect(() => parseResponseFormat(bad)).toThrow('invalid_request');
+  });
+  it('translates response_format into the app-server output schema', () => {
+    const schema = { type: 'object', properties: { a: { type: 'string' } } };
+    expect(codexOutputSchema({ type: 'json_schema', json_schema: { schema } })).toBe(schema);
+    expect(codexOutputSchema({ type: 'json_object' })).toEqual({ type: 'object' });
+    expect(codexOutputSchema({ type: 'text' })).toBeUndefined();
+    expect(codexOutputSchema(undefined)).toBeUndefined();
+  });
+  it('replays the schema onto the next sub when the first one fails', async () => {
+    const store = new Store(); const adapters = new Map<string, ProviderAdapter>();
+    const first = account('first'), second = account('second');
+    store.addAccount(first); store.addAccount(second);
+    const seen: unknown[] = [];
+    class Recording extends FakeAdapter { override async run(thread: string | undefined, model: string, input: string, emit: (event: PattyEvent) => void, turn?: Parameters<ProviderAdapter['run']>[4], options?: Parameters<ProviderAdapter['run']>[5]) { seen.push(options?.responseFormat); return super.run(thread, model, input, emit, turn, options); } }
+    const failing = new FakeAdapter(['gpt-5-codex'], { remaining: 1, observedAt: now() }).failNext('boom');
+    adapters.set(first.id, failing); adapters.set(second.id, new Recording());
+    const coordinator = new Coordinator(store, new Router(store), adapters);
+    const responseFormat = { type: 'json_schema', json_schema: { schema: { type: 'object', properties: { a: { type: 'string' } } } } } as const;
+    const runId = await coordinator.start({ model: 'gpt-5-codex', input: 'x', responseFormat });
+    await coordinator.collect(runId);
+    expect(seen).toEqual([responseFormat]);
   });
 });

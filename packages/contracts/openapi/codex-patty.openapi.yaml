@@ -38,6 +38,25 @@ components:
             messages: { type: array, items: { type: object } }
             tools: { type: array, items: { type: object, required: [type, function], properties: { type: { type: string, enum: [function] }, function: { type: object, required: [name], properties: { name: { type: string }, description: { type: string }, parameters: { type: object } } } } } }
             toolChoice: {}
+        responseFormat: { $ref: '#/components/schemas/ResponseFormat' }
+    ResponseFormat:
+      description: 'Constrains the final message. json_schema is passed to the provider as the turn output schema, so the answer is the caller''s JSON rather than prose; json_object asks only for a JSON object. A malformed value is 400 invalid_request rather than a silently dropped schema.'
+      oneOf:
+        - type: object
+          required: [type]
+          properties: { type: { type: string, enum: [text, json_object] } }
+        - type: object
+          required: [type, json_schema]
+          properties:
+            type: { type: string, enum: [json_schema] }
+            json_schema:
+              type: object
+              required: [schema]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                strict: { type: boolean }
+                schema: { type: object, additionalProperties: true }
     ToolCall:
       type: object
       required: [id, type, function]
@@ -102,6 +121,7 @@ components:
               properties:
                 type: { type: string, enum: [function] }
                 function: { type: object, properties: {name: {type: string}} }
+        response_format: { $ref: '#/components/schemas/ResponseFormat' }
 paths:
   /healthz: { get: { responses: {'200': {description: Liveness}} } }
   /: { get: { responses: {'200': {description: Loopback operator console (HTML)}} } }
@@ -115,7 +135,7 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ChatCompletion'}}}}
       responses:
         '200': {description: 'chat.completion, or a chat.completion.chunk SSE stream when stream is true. A turn that calls tools has finish_reason tool_calls, null content and a tool_calls array; tool calls are never persisted, so they appear only on the live response.'}
-        '400': {description: 'Invalid request, or model_unavailable when tools were offered and no stacked sub serving that model supports them'}
+        '400': {description: 'Invalid request, including a malformed response_format, or model_unavailable when tools were offered and no stacked sub serving that model supports them'}
         '502': {description: Upstream run failed or was cancelled}
         '503': {description: 'no_eligible_account: every eligible sub is busy, cooling down or out of quota. Retryable, with Retry-After.'}
   /v1/router/status: { get: { security: [{PattyKey: []}], responses: {'200': {description: Router status}} } }

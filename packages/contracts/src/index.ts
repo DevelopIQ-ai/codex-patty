@@ -18,7 +18,18 @@ export type ChatToolCall = { id: string; type: 'function'; function: { name: str
  * Requests carrying tools require the `tools` capability, so a sub that cannot honour them is never chosen.
  */
 export type ChatTurn = { messages: unknown[]; tools?: ChatTool[]; toolChoice?: ChatToolChoice };
-export type RunRequest = { model: string; input: string; capabilities?: string[]; accountId?: string; idempotencyKey?: string; threadId?: string; chat?: ChatTurn };
+/**
+ * OpenAI's `response_format`. An agentic caller asks for a filled-in schema far more often than
+ * for prose, and a schema that is dropped on the way to the provider comes back as a paragraph the
+ * caller cannot parse, so it travels with the turn rather than being flattened into the prompt.
+ */
+export type ChatResponseFormat =
+ | { type: 'text' }
+ | { type: 'json_object' }
+ | { type: 'json_schema'; json_schema: { name?: string; description?: string; schema: Record<string, unknown>; strict?: boolean } };
+/** Per-turn constraints that are neither the prompt nor the conversation, honoured by whichever sub serves the run. */
+export type TurnOptions = { responseFormat?: ChatResponseFormat };
+export type RunRequest = { model: string; input: string; capabilities?: string[]; accountId?: string; idempotencyKey?: string; threadId?: string; chat?: ChatTurn } & TurnOptions;
 export type PattyEvent = { version: 1; type: 'started' | 'delta' | 'tool_calls' | 'usage' | 'approval_required' | 'completed' | 'failed' | 'cancelled'; runId: string; data?: unknown };
 /** Provider-reported token counts for a single turn. Counts are metadata, never generated content. */
 export type TokenUsage = { inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; totalTokens: number };
@@ -48,7 +59,7 @@ export interface ProviderAdapter {
   snapshot(): Promise<{ models: string[]; quota: Quota; capabilities?: string[] }>;
   createThread(model: string): Promise<string>;
   /** Resolves as soon as the provider accepts the turn, with its cancellation ID. */
-  run(threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void, turn?: ChatTurn): Promise<{ turnId: string }>;
+  run(threadId: string | undefined, model: string, input: string, onEvent: (event: PattyEvent) => void, turn?: ChatTurn, options?: TurnOptions): Promise<{ turnId: string }>;
   interrupt(providerTurnId: string): Promise<void>;
   approve(approvalId: string, approved: boolean): Promise<void>;
   logout(): Promise<void>;

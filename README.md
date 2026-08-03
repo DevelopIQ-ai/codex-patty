@@ -86,6 +86,8 @@ print(client.chat.completions.create(model="gpt-5-codex",
 
 Word-by-word streaming (`stream=True`) works the same way it does with OpenAI, and the last chunk tells you how many tokens the request used. Every answer carries a header called `x-patty-sub` naming which subscription actually served it, so you are never guessing.
 
+**Asking for JSON works too.** Most apps do not want a paragraph, they want a filled-in form — a name, a number, a list. Send `response_format` with your JSON schema exactly as you would to OpenAI and the answer comes back in that shape, whichever subscription served it. If you send a schema Patty cannot understand, it tells you instead of quietly answering with prose your code cannot read.
+
 **Tool calling works too.** (Tool calling is how an AI asks your code to run a function — look up the weather, search a database — instead of just replying with text. It is how Cursor and most AI agents work.) Send `tools` exactly as you would to OpenAI. Patty only sends such a request to a subscription that can genuinely handle tools; if none of yours can, it says so clearly instead of quietly giving you an answer that ignores your tools.
 
 Not supported yet: asking for several answers at once (`n>1`), logprobs, and images.

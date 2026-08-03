@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import type { PattyEvent, ProviderAdapter, Quota, TokenUsage } from '@patty/contracts';
+import type { ChatResponseFormat, ChatTurn, PattyEvent, ProviderAdapter, Quota, TokenUsage, TurnOptions } from '@patty/contracts';
 
 type Rpc = { id?: unknown; method?: unknown; params?: unknown; result?: unknown; error?: { message?: unknown } };
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
@@ -19,6 +19,13 @@ const tokenUsage = (breakdown: UsageBreakdown | undefined): TokenUsage | undefin
   return { inputTokens, cachedInputTokens: read(breakdown.cachedInputTokens), outputTokens, reasoningOutputTokens: read(breakdown.reasoningOutputTokens), totalTokens: read(breakdown.totalTokens) || inputTokens + outputTokens };
 };
 const approvalMethods = new Set(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'applyPatchApproval', 'execCommandApproval']);
+/**
+ * The app-server constrains a turn's final message with a JSON Schema, which is exactly what
+ * `response_format` asks for. `json_object` names no schema, so the loosest object schema is the
+ * faithful translation of "any JSON object".
+ */
+export const codexOutputSchema = (format: ChatResponseFormat | undefined) =>
+  format?.type === 'json_schema' ? format.json_schema.schema : format?.type === 'json_object' ? { type: 'object' } : undefined;
 
 /** Official Codex CLI 0.145.0 app-server JSONL adapter. */
 export class CodexAppServerAdapter extends EventEmitter implements ProviderAdapter {
@@ -87,7 +94,7 @@ export class CodexAppServerAdapter extends EventEmitter implements ProviderAdapt
   async waitForAccount(timeoutMs = 30_000) { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const result = await this.account(); if (result.account) return result; await new Promise(resolve => setTimeout(resolve, 500)); } throw new Error('account_login_not_ready'); }
   async snapshot() { await this.waitForAccount(); const models = await this.rpc('model/list', {}) as { data: { model?: string; id?: string }[] }; const limits = await this.rpc('account/rateLimits/read') as { rateLimits: { primary?: RateWindow | null; secondary?: RateWindow | null } }; return { models: models.data.map(model => model.model ?? model.id).filter((model): model is string => Boolean(model)), capabilities: [], quota: this.quota(limits.rateLimits) }; }
   async createThread(model: string) { return (await this.rpc('thread/start', { model, ephemeral: true }) as { thread: { id: string } }).thread.id; }
-  async run(threadId: string | undefined, model: string, input: string, emit: (event: PattyEvent) => void) { const activeThreadId = threadId ?? await this.createThread(model); const result = await this.rpc('turn/start', { threadId: activeThreadId, model, input: [{ type: 'text', text: input, text_elements: [] }] }) as { turn: { id: string } }; this.turns.set(result.turn.id, { threadId: activeThreadId, emit }); const legacy = this.earlyApprovalsByThread.get(activeThreadId) ?? []; this.earlyApprovalsByThread.delete(activeThreadId); for (const approval of legacy) { approval.turnId = result.turn.id; this.approvals.set(String(approval.requestId), approval); emit({ version: 1, type: 'approval_required', runId: result.turn.id, data: { approvalId: String(approval.requestId) } }); } let terminal = false; for (const message of this.earlyEvents.get(result.turn.id) ?? []) { if ('approval' in message) { this.approvals.set(String(message.approval.requestId), message.approval); emit({ version: 1, type: 'approval_required', runId: result.turn.id, data: { approvalId: String(message.approval.requestId) } }); } else { emit(message); terminal ||= message.type === 'completed' || message.type === 'failed' || message.type === 'cancelled'; } } if (terminal) this.clearTurn(result.turn.id); else this.earlyEvents.delete(result.turn.id); return { turnId: result.turn.id }; }
+  async run(threadId: string | undefined, model: string, input: string, emit: (event: PattyEvent) => void, _turn?: ChatTurn, options?: TurnOptions) { const activeThreadId = threadId ?? await this.createThread(model); const outputSchema = codexOutputSchema(options?.responseFormat); const result = await this.rpc('turn/start', { threadId: activeThreadId, model, input: [{ type: 'text', text: input, text_elements: [] }], ...(outputSchema ? { outputSchema } : {}) }) as { turn: { id: string } }; this.turns.set(result.turn.id, { threadId: activeThreadId, emit }); const legacy = this.earlyApprovalsByThread.get(activeThreadId) ?? []; this.earlyApprovalsByThread.delete(activeThreadId); for (const approval of legacy) { approval.turnId = result.turn.id; this.approvals.set(String(approval.requestId), approval); emit({ version: 1, type: 'approval_required', runId: result.turn.id, data: { approvalId: String(approval.requestId) } }); } let terminal = false; for (const message of this.earlyEvents.get(result.turn.id) ?? []) { if ('approval' in message) { this.approvals.set(String(message.approval.requestId), message.approval); emit({ version: 1, type: 'approval_required', runId: result.turn.id, data: { approvalId: String(message.approval.requestId) } }); } else { emit(message); terminal ||= message.type === 'completed' || message.type === 'failed' || message.type === 'cancelled'; } } if (terminal) this.clearTurn(result.turn.id); else this.earlyEvents.delete(result.turn.id); return { turnId: result.turn.id }; }
   async interrupt(providerTurnId: string) { const ref = this.turns.get(providerTurnId); if (!ref) throw new Error('unknown_turn'); await this.rpc('turn/interrupt', { threadId: ref.threadId, turnId: providerTurnId }); }
   async approve(approvalId: string, approved: boolean) { const approval = this.approvals.get(approvalId); if (!approval) throw new Error('unknown_approval'); this.approvals.delete(approvalId); this.respond(approval.requestId, this.approvalResult(approval, approved)); }
   async logout() { await this.rpc('account/logout'); } async health() { return Boolean(this.child); }
