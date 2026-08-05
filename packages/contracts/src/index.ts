@@ -40,9 +40,16 @@ export type RunRequest = { model: string; input: string; capabilities?: string[]
 export type PattyEvent = { version: 1; type: 'started' | 'delta' | 'tool_calls' | 'usage' | 'approval_required' | 'completed' | 'failed' | 'cancelled'; runId: string; data?: unknown };
 /** Provider-reported token counts for a single turn. Counts are metadata, never generated content. */
 export type TokenUsage = { inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; totalTokens: number };
-export type UsageTotals = TokenUsage & { runs: number };
+/**
+ * Cached input as a share of the input tokens the provider reported, derived rather than stored so
+ * it can never disagree with the counts it comes from. `null` when nothing has reported input
+ * tokens yet, which is deliberately not `0`: a stack with no measured run has no hit rate, and
+ * showing one would read as a cache that is missing every time.
+ */
+export type CacheStats = { cacheHitRate: number | null };
+export type UsageTotals = TokenUsage & CacheStats & { runs: number };
 export type AccountUsage = UsageTotals & { accountId: string; alias: string };
-export type RunUsage = TokenUsage & { runId: string; accountId: string; alias: string; model: string; observedAt: string; keyId: string | null; keyName: string | null };
+export type RunUsage = TokenUsage & CacheStats & { runId: string; accountId: string; alias: string; model: string; observedAt: string; keyId: string | null; keyName: string | null };
 export type KeyUsage = UsageTotals & { keyId: string | null; name: string | null; prefix: string | null };
 /**
  * Dollars are always an estimate: the token counts are the provider's, but the prices come from a

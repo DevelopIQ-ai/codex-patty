@@ -293,6 +293,8 @@ describe('observability', () => {
     expect(body).toMatch(/patty_run_attempts_total\{reason="quota_failover"\} 1/);
     expect(body).toMatch(/patty_runs_total\{status="completed"\} 1/);
     expect(body).toMatch(/patty_tokens_total\{sub="spare",direction="input"\} \d+/);
+    expect(body).toMatch(/patty_cached_input_tokens_total\{sub="spare"\} \d+/);
+    expect(body).toMatch(/patty_cache_hit_ratio\{sub="spare"\} [\d.]+/);
     expect((await fetch(`http://127.0.0.1:${port}/metrics`)).status).toBe(401);
   });
 

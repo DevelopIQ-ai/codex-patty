@@ -6,7 +6,7 @@ import type { Account, ChatToolCall, PattyEvent, ProviderAdapter } from '@patty/
 import { ToolBridge } from '../src/tool-bridge.js';
 import { loadAliases, resolveModel } from '../src/aliases.js';
 import { responsesBody, responsesToChat } from '../src/responses.js';
-import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, effectiveQuota, eligible, id, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
+import { Coordinator, FakeAdapter, KeyLimiter, RateLimited, Router, Store, cacheHitRate, effectiveQuota, eligible, id, now, quotaExhausted, resetUrgency, score } from '../src/core.js';
 import { estimateCost, loadPrices } from '../src/pricing.js';
 import { bridgePreamble, codexOutputSchema } from '../src/codex.js';
 import { writeFileSync } from 'node:fs';
@@ -66,7 +66,7 @@ it('publishes exactly one local started event when a real adapter also emits pro
 
 it('aggregates token usage per sub and keeps only the latest snapshot for a run', async () => { const store=new Store();const first=account('metered-a');const second=account('metered-b');store.addAccount(first);store.addAccount(second);const coordinator=new Coordinator(store,new Router(store),new Map([[first.id,new FakeAdapter()],[second.id,new FakeAdapter()]]));const runs=[await coordinator.start({model:'gpt-5-codex',input:'one two three',accountId:first.id}),await coordinator.start({model:'gpt-5-codex',input:'four',accountId:second.id})];await wait();const report=store.usageReport();expect(report.totals.runs).toBe(2);expect(report.totals.totalTokens).toBe(report.accounts.reduce((sum,item)=>sum+item.totalTokens,0));expect(report.accounts.map(item=>item.alias).sort()).toEqual(['metered-a','metered-b']);expect(report.runs.map(item=>item.runId).sort()).toEqual([...runs].sort());store.recordUsage(runs[0]!,first.id,'gpt-5-codex',{inputTokens:10,cachedInputTokens:1,outputTokens:2,reasoningOutputTokens:3,totalTokens:12});const rerecorded=store.usageReport();expect(rerecorded.totals.runs).toBe(2);expect(rerecorded.runs.find(item=>item.runId===runs[0])?.totalTokens).toBe(12); });
 
-it('reports zeroed usage totals before any run is measured', () => { const report=new Store().usageReport();expect(report).toEqual({totals:{inputTokens:0,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:0,runs:0,cost:{estimatedCostUsd:0,unpricedRuns:0}},accounts:[],keys:[],runs:[],cost:{estimatedCostUsd:0,unpricedRuns:0,subscriptionUsd:0,apiUsd:0,unpricedModels:[]}}); });
+it('reports zeroed usage totals before any run is measured', () => { const report=new Store().usageReport();expect(report).toEqual({totals:{inputTokens:0,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:0,runs:0,cacheHitRate:null,cost:{estimatedCostUsd:0,unpricedRuns:0}},accounts:[],keys:[],runs:[],cost:{estimatedCostUsd:0,unpricedRuns:0,subscriptionUsd:0,apiUsd:0,unpricedModels:[]}}); });
 
 it('persists token counts but never output text for usage events', async () => { const store=new Store();const a=account('usage-events');store.addAccount(a);const coordinator=new Coordinator(store,new Router(store),new Map([[a.id,new FakeAdapter()]]));const run=await coordinator.start({model:'gpt-5-codex',input:'measure me'});await wait();const usage=coordinator.events(run).find(event=>event.type==='usage');expect(usage?.data).toMatchObject({inputTokens:expect.any(Number),outputTokens:expect.any(Number)});expect(JSON.stringify(usage?.data)).not.toContain('measure me'); });
 
@@ -310,6 +310,61 @@ describe('cost estimates', () => {
     const work = report.accounts.find(entry => entry.alias === 'codex-work')!;
     expect(work).toMatchObject({ tier: 'primary', cost: { estimatedCostUsd: 1.25, unpricedRuns: 1 } });
     expect(report.runs.find(run => run.model === 'local-llama')!.estimatedCostUsd).toBeNull();
+  });
+});
+
+describe('cache hit rate', () => {
+  it('is the cached share of input, and is unknown rather than zero when nothing was measured', () => {
+    expect(cacheHitRate({ inputTokens: 1_000, cachedInputTokens: 250 })).toBe(0.25);
+    expect(cacheHitRate({ inputTokens: 3, cachedInputTokens: 1 })).toBe(0.3333);
+    expect(cacheHitRate({ inputTokens: 1_000, cachedInputTokens: 0 })).toBe(0);
+    expect(cacheHitRate({ inputTokens: 0, cachedInputTokens: 0 })).toBeNull();
+    // A provider reporting more cached than input tokens is a bad number, not a cache better than perfect.
+    expect(cacheHitRate({ inputTokens: 100, cachedInputTokens: 500 })).toBe(1);
+  });
+
+  it('derives a rate per sub, per key and overall from the stored counts', async () => {
+    const store = new Store();
+    const warm = { id: 'acct_warm', alias: 'warm', tier: 'primary' as const, state: 'ready' as const, models: ['gpt-5-codex'], quota: { remaining: 1, observedAt: now() }, health: 1, activeRuns: 0 };
+    const cold = { ...warm, id: 'acct_cold', alias: 'cold' };
+    store.addAccount(warm); store.addAccount(cold);
+    const key = store.issueKey('puffle-prod');
+    const measured = [[warm, 900] as const, [cold, 100] as const];
+    for (const [account, cached] of measured) {
+      const run = { id: id('run'), accountId: account.id, model: 'gpt-5-codex', fingerprint: 'f', status: 'completed' as const, outputStarted: true, cancelRequested: false, apiKeyId: key.id };
+      store.createRun(run);
+      store.recordUsage(run.id, account.id, 'gpt-5-codex', { inputTokens: 1_000, cachedInputTokens: cached, outputTokens: 10, reasoningOutputTokens: 0, totalTokens: 1_010 });
+    }
+    const report = store.usageReport();
+    expect(report.accounts.find(entry => entry.alias === 'warm')!.cacheHitRate).toBe(0.9);
+    expect(report.accounts.find(entry => entry.alias === 'cold')!.cacheHitRate).toBe(0.1);
+    expect(report.keys.find(entry => entry.keyId === key.id)!.cacheHitRate).toBe(0.5);
+    expect(report.totals.cacheHitRate).toBe(0.5);
+    expect(report.runs.map(run => run.cacheHitRate).sort()).toEqual([0.1, 0.9]);
+    expect(store.runHistory().map(run => run.cacheHitRate).sort()).toEqual([0.1, 0.9]);
+  });
+
+  it('reports a warm thread as partly cached on a fake sub, so the rate can be seen without a real one', async () => {
+    const store = new Store();
+    const a = account('warm-thread');
+    store.addAccount(a);
+    const coordinator = new Coordinator(store, new Router(store), new Map([[a.id, new FakeAdapter()]]));
+    const cold = await coordinator.start({ model: 'gpt-5-codex', input: 'first turn of a conversation' });
+    const thread = await coordinator.createThread('gpt-5-codex', a.id);
+    const warm = await coordinator.start({ model: 'gpt-5-codex', input: 'second turn of a conversation', threadId: thread.threadId });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const rate = (run: string) => store.usageReport().runs.find(entry => entry.runId === run)!.cacheHitRate!;
+    expect(rate(cold)).toBe(0);
+    expect(rate(warm)).toBeGreaterThan(0.5);
+  });
+
+  it('leaves an unmetered run without a hit rate instead of calling it a miss', () => {
+    const store = new Store();
+    const account = { id: 'acct_unmetered', alias: 'unmetered', tier: 'primary' as const, state: 'ready' as const, models: ['gpt-5-codex'], quota: { remaining: 1, observedAt: now() }, health: 1, activeRuns: 0 };
+    store.addAccount(account);
+    store.createRun({ id: id('run'), accountId: account.id, model: 'gpt-5-codex', fingerprint: 'f', status: 'completed', outputStarted: true, cancelRequested: false });
+    expect(store.runHistory()).toMatchObject([{ inputTokens: null, cachedInputTokens: null, cacheHitRate: null }]);
+    expect(store.usageReport().totals.cacheHitRate).toBeNull();
   });
 });
 
