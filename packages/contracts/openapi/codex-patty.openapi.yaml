@@ -148,7 +148,7 @@ components:
 paths:
   /healthz: { get: { responses: {'200': {description: Liveness}} } }
   /: { get: { responses: {'200': {description: Loopback operator console (HTML)}} } }
-  /v1/usage: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Token usage totals, per-sub and per-key aggregates, and recent measured runs. Each carries a cost block estimated from a local price table (override with PATTY_PRICES): subscriptionUsd is what primary subs absorbed at API list price, apiUsd is real fallback spend, and a model with no price is counted in unpricedRuns rather than as zero.'}} } }
+  /v1/usage: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Token usage totals, per-sub and per-key aggregates, and recent measured runs. Each carries cacheHitRate, the cached share of provider-reported input tokens, which is null until input tokens have been measured rather than 0. Each also carries a cost block estimated from a local price table (override with PATTY_PRICES): subscriptionUsd is what primary subs absorbed at API list price, apiUsd is real fallback spend, and a model with no price is counted in unpricedRuns rather than as zero.'}} } }
   /v1/models: { get: { security: [{PattyKey: []}], responses: {'200': {description: 'Models in OpenAI list shape; each entry names the subs that serve it. An aliased name is listed too, with aliasOf naming the model that actually answers it.'}} } }
   /v1/chat/completions:
     post:

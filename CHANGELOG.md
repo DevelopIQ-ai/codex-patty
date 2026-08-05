@@ -6,6 +6,7 @@ Notable changes to Pattystack. Format follows [Keep a Changelog](https://keepach
 
 ### Added
 
+- **Cache hit rate.** `cacheHitRate` (cached share of provider-reported input tokens) on `/v1/usage` totals, subs, keys and runs, on `/v1/runs`, and in the console next to the token counts; `/metrics` gains `patty_cached_input_tokens_total{sub}` and `patty_cache_hit_ratio{sub}`. Derived from the stored counts, and `null`/absent rather than `0` when nothing has been measured. A `--fake` sub now reports a warm prompt prefix as cached on a thread's later turns, so the rate is visible without a real subscription.
 - `docs/deploy.md`: running Patty on one always-on box and pointing an app at it over a tailnet or TLS proxy.
 - Issue and pull request templates, and this changelog.
 

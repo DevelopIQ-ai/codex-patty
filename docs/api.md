@@ -108,7 +108,19 @@ If every eligible sub is busy, cooling down or out of quota, the request is answ
 
 ## Usage metering
 
-`GET /v1/usage` returns token totals, per-sub aggregates, and the most recent measured runs. Patty persists only provider-reported counts (input, cached input, output, reasoning output, total) keyed by run, sub, and model — never prompts or generated text. Counts come from the provider alone; a provider that reports none (an OpenAI-compatible endpoint that ignores `stream_options.include_usage`, for instance) leaves the run unmetered, and `GET /v1/runs` returns null token fields for it while still naming the model the run asked for. The console shows those as `not reported`, which is deliberately distinct from zero. A run's row is replaced by each newer provider snapshot, so totals stay exact when a turn reports usage more than once.
+`GET /v1/usage` returns token totals, per-sub and per-key aggregates with their cache hit rates, and the most recent measured runs. Patty persists only provider-reported counts (input, cached input, output, reasoning output, total) keyed by run, sub, and model — never prompts or generated text. Counts come from the provider alone; a provider that reports none (an OpenAI-compatible endpoint that ignores `stream_options.include_usage`, for instance) leaves the run unmetered, and `GET /v1/runs` returns null token fields for it while still naming the model the run asked for. The console shows those as `not reported`, which is deliberately distinct from zero. A run's row is replaced by each newer provider snapshot, so totals stay exact when a turn reports usage more than once.
+
+### Cache hit rate
+
+Cached input is the part of a prompt the provider recognised from an earlier turn and billed at a discount, so how much of it is cached is the difference between a cheap conversation and an expensive one. `GET /v1/usage` carries `cacheHitRate` — `cachedInputTokens / inputTokens` — on the totals, on every sub and key, and on each recent run, and `GET /v1/runs` carries it per run:
+
+```json
+{ "totals": { "inputTokens": 412000, "cachedInputTokens": 297000, "cacheHitRate": 0.7209 } }
+```
+
+It is derived from the stored counts rather than stored, so it can never disagree with them. `cacheHitRate` is `null` — the console prints `not reported` — whenever no input tokens were measured: a sub that has served nothing, or a provider that reports no usage at all, has *no* hit rate, and a `0` there would read as a cache missing every single time. `/metrics` exposes `patty_cached_input_tokens_total{sub}` and `patty_cache_hit_ratio{sub}`; cached tokens are a subset of `patty_tokens_total{direction="input"}` rather than a third direction, so summing the directions still gives total tokens, and the ratio gauge is absent for a sub with nothing measured instead of reporting zero.
+
+The stack's own lever on that rate is thread affinity: a thread stays pinned to the sub that started it, so the provider-side prompt cache stays warm across turns. Pre-output failover to another sub deliberately gives that up — an answer on a cold cache beats no answer — and shows up as a dip in the rate alongside `patty_run_attempts_total{reason="quota_failover"}`.
 
 ### Estimated cost
 

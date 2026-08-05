@@ -71,6 +71,7 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
       <div class="card"><div class="k">Tokens out</div><div class="v" id="t-out">0</div></div>
       <div class="card"><div class="k">Total tokens</div><div class="v" id="t-total">0</div></div>
       <div class="card"><div class="k">Cached in</div><div class="v" id="t-cached">0</div></div>
+      <div class="card"><div class="k">Cache hit rate</div><div class="v" id="t-hit">—</div></div>
       <div class="card"><div class="k">Reasoning out</div><div class="v" id="t-reasoning">0</div></div>
       <div class="card"><div class="k">Runs measured</div><div class="v" id="t-runs">0</div></div>
     </div>
@@ -143,12 +144,12 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
 
   <section class="wide">
     <h2>Usage per key</h2>
-    <table><thead><tr><th>Key</th><th>Runs</th><th>Tokens in</th><th>Tokens out</th><th>Total</th><th>Est. cost</th></tr></thead><tbody id="per-key"><tr><td colspan="6" class="muted">no usage recorded yet</td></tr></tbody></table>
+    <table><thead><tr><th>Key</th><th>Runs</th><th>Tokens in</th><th>Cached in</th><th>Hit rate</th><th>Tokens out</th><th>Total</th><th>Est. cost</th></tr></thead><tbody id="per-key"><tr><td colspan="8" class="muted">no usage recorded yet</td></tr></tbody></table>
   </section>
 
   <section class="wide">
     <h2>Usage per sub</h2>
-    <table><thead><tr><th>Alias</th><th>Tier</th><th>Runs</th><th>Tokens in</th><th>Tokens out</th><th>Total</th><th>Est. cost</th><th style="width:26%">Share</th></tr></thead><tbody id="per-account"><tr><td colspan="8" class="muted">no usage recorded yet</td></tr></tbody></table>
+    <table><thead><tr><th>Alias</th><th>Tier</th><th>Runs</th><th>Tokens in</th><th>Cached in</th><th>Hit rate</th><th>Tokens out</th><th>Total</th><th>Est. cost</th><th style="width:26%">Share</th></tr></thead><tbody id="per-account"><tr><td colspan="10" class="muted">no usage recorded yet</td></tr></tbody></table>
     <p class="muted">A <code>primary</code> sub's cost is what those turns would have cost at API list price — your subscription absorbed it. A <code>fallback</code> sub's cost is real spend.</p>
   </section>
 
@@ -163,7 +164,7 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; 
       <button id="refresh-runs">Apply</button>
       <span class="muted" id="runs-count"></span>
     </div>
-    <table><thead><tr><th>Run</th><th>Sub</th><th>Key</th><th>Model</th><th>Status</th><th>Tries</th><th>In</th><th>Out</th><th>Total</th><th>Started</th></tr></thead><tbody id="recent"><tr><td colspan="10" class="muted">no runs yet</td></tr></tbody></table>
+    <table><thead><tr><th>Run</th><th>Sub</th><th>Key</th><th>Model</th><th>Status</th><th>Tries</th><th>In</th><th>Cached</th><th>Hit rate</th><th>Out</th><th>Total</th><th>Started</th></tr></thead><tbody id="recent"><tr><td colspan="12" class="muted">no runs yet</td></tr></tbody></table>
   </section>
 
   <section class="wide">
@@ -244,6 +245,7 @@ function renderUsage(report) {
   el('t-out').textContent = fmt(report.totals.outputTokens);
   el('t-total').textContent = fmt(report.totals.totalTokens);
   el('t-cached').textContent = fmt(report.totals.cachedInputTokens);
+  el('t-hit').textContent = rate(report.totals.cacheHitRate);
   el('t-reasoning').textContent = fmt(report.totals.reasoningOutputTokens);
   el('t-runs').textContent = fmt(report.totals.runs);
   el('t-saved').textContent = usd(report.cost.subscriptionUsd);
@@ -254,11 +256,14 @@ function renderUsage(report) {
     + (report.cost.unpricedRuns ? report.cost.unpricedRuns + ' run(s) are unpriced: no price for ' + report.cost.unpricedModels.join(', ') + '.' : 'Every measured run is priced.');
   const max = Math.max(1, ...report.accounts.map(account => account.totalTokens));
   el('per-account').innerHTML = report.accounts.length ? report.accounts.map(account => \`<tr>
-    <td><code>\${account.alias}</code></td><td>\${account.tier}</td><td>\${fmt(account.runs)}</td><td>\${fmt(account.inputTokens)}</td><td>\${fmt(account.outputTokens)}</td><td>\${fmt(account.totalTokens)}</td><td>\${cost(account.cost)}</td>
-    <td><div class="bar"><i style="width:\${Math.round((account.totalTokens / max) * 100)}%"></i></div></td></tr>\`).join('') : '<tr><td colspan="8" class="muted">no usage recorded yet</td></tr>';
+    <td><code>\${account.alias}</code></td><td>\${account.tier}</td><td>\${fmt(account.runs)}</td><td>\${fmt(account.inputTokens)}</td><td>\${fmt(account.cachedInputTokens)}</td><td>\${rate(account.cacheHitRate)}</td><td>\${fmt(account.outputTokens)}</td><td>\${fmt(account.totalTokens)}</td><td>\${cost(account.cost)}</td>
+    <td><div class="bar"><i style="width:\${Math.round((account.totalTokens / max) * 100)}%"></i></div></td></tr>\`).join('') : '<tr><td colspan="10" class="muted">no usage recorded yet</td></tr>';
   el('per-key').innerHTML = report.keys.length ? report.keys.map(entry => \`<tr>
-    <td>\${keyLabel(entry.name, entry.keyId, entry.prefix)}</td><td>\${fmt(entry.runs)}</td><td>\${fmt(entry.inputTokens)}</td><td>\${fmt(entry.outputTokens)}</td><td>\${fmt(entry.totalTokens)}</td><td>\${cost(entry.cost)}</td></tr>\`).join('') : '<tr><td colspan="6" class="muted">no usage recorded yet</td></tr>';
+    <td>\${keyLabel(entry.name, entry.keyId, entry.prefix)}</td><td>\${fmt(entry.runs)}</td><td>\${fmt(entry.inputTokens)}</td><td>\${fmt(entry.cachedInputTokens)}</td><td>\${rate(entry.cacheHitRate)}</td><td>\${fmt(entry.outputTokens)}</td><td>\${fmt(entry.totalTokens)}</td><td>\${cost(entry.cost)}</td></tr>\`).join('') : '<tr><td colspan="8" class="muted">no usage recorded yet</td></tr>';
 }
+
+/** No measured input means no hit rate, shown as unknown rather than as 0% so an idle stack never looks like a cache that keeps missing. */
+function rate(value) { return value === null || value === undefined ? '<span class="muted">not reported</span>' : Math.round(value * 100) + '%'; }
 
 function usd(value) { return '$' + (value < 1 && value > 0 ? value.toFixed(4) : value.toFixed(2)); }
 /** An unpriced run is called out next to the money rather than folded into it, so a partial estimate never reads as the whole bill. */
@@ -297,8 +302,8 @@ function renderHistory(runs) {
     <td><code>\${run.runId}</code></td><td><code>\${run.alias}</code></td><td class="muted">\${keyLabel(run.keyName, run.keyId, run.keyPrefix)}</td>
     <td class="muted">\${run.model ?? '—'}</td><td class="\${run.status === 'completed' ? 'ok' : run.status === 'failed' ? 'err' : 'muted'}">\${run.status}</td>
     <td class="\${run.attempts > 1 ? 'warn' : 'muted'}">\${run.attempts}</td>
-    <td>\${tokens(run.inputTokens)}</td><td>\${tokens(run.outputTokens)}</td><td>\${tokens(run.totalTokens)}</td>
-    <td class="muted">\${new Date(run.createdAt).toLocaleTimeString()}</td></tr>\`).join('') : '<tr><td colspan="10" class="muted">no runs match these filters</td></tr>';
+    <td>\${tokens(run.inputTokens)}</td><td>\${tokens(run.cachedInputTokens)}</td><td>\${rate(run.cacheHitRate)}</td><td>\${tokens(run.outputTokens)}</td><td>\${tokens(run.totalTokens)}</td>
+    <td class="muted">\${new Date(run.createdAt).toLocaleTimeString()}</td></tr>\`).join('') : '<tr><td colspan="12" class="muted">no runs match these filters</td></tr>';
   el('runs-count').textContent = runs.length + ' run(s)';
 }
 
